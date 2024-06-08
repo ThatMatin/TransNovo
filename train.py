@@ -9,9 +9,9 @@ d_model = 32
 n_heads = 8
 d_key = d_model//n_heads
 d_val = d_model//n_heads
+d_ff = 128
 n_enc_layer = 2
 n_dec_layer = 3
-dim_feed_forward = 128
 dropout = 0.2
 activation = nn.ReLU()
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -52,7 +52,54 @@ class MultiHeadAttention(nn.Module):
     def forward(self, x):
         out = torch.concat([h(x) for h in self.heads], dim=-1)
         out = self.dropout(self.proj(out))
-        return
+        return out
+
+class AttentionBlock(nn.Module):
+    def __init__(self, is_masked=False):
+        super().__init__()
+        self.MHA = MultiHeadAttention(is_masked)
+        self.ln1 = nn.LayerNorm(d_model)
+        self.ln2 = nn.LayerNorm(d_model)
+
+    def forward(self, x):
+        x = x + self.MHA(self.ln1(x))
+        out = self.ln2(x)
+        return out
+
+class FeedForward(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+                nn.Linear(d_model, d_ff),
+                activation,
+                nn.Linear(d_ff, d_model),
+                nn.Dropout(dropout),
+                )
+
+    def forward(self, x):
+        out = self.net(x)
+        return out
+
+class FeedForwardBlock(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.ff = FeedForward()
+        self.ln = nn.LayerNorm(d_model)
+
+    def forward(self, x):
+        out = x + self.ff(x)
+        out = self.ln(out)
+        return out
+
+class Encoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.at = AttentionBlock()
+        self.ff = FeedForwardBlock()
+
+    def forward(self, x):
+        out = self.ff(self.at(x))
+        return out
 
 
 class TransNovo(nn.Module):
@@ -63,7 +110,15 @@ class TransNovo(nn.Module):
         pass
 
 
-#|%%--%%| <yxh8vl6HXU|T4hzN4yUll>
+#|%%--%%| <yxh8vl6HXU|LKAkSrBI89>
+
+enc = Encoder()
+x = torch.randn((batch_size, 20, d_model))
+out = enc(x)
+out.shape
+print(sum([p.numel() for p in enc.parameters()]))
+
+#|%%--%%| <LKAkSrBI89|T4hzN4yUll>
 
 ma = MultiHeadAttention()
 x = torch.randn((batch_size, 20, d_model))
