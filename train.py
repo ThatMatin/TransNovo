@@ -4,6 +4,7 @@ import torch.nn.functional as F
 
 #|%%--%%| <hVaifVrkF7|BP1Q2E56wH>
 
+input_dim = 20
 batch_size = 16
 d_model = 32
 n_heads = 8
@@ -15,6 +16,7 @@ n_dec_layer = 3
 dropout = 0.2
 activation = nn.ReLU()
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+data_dir = './data/'
 print(f'using device {device}')
 
 #|%%--%%| <BP1Q2E56wH|yxh8vl6HXU>
@@ -151,3 +153,67 @@ keys = torch.stack([head.key.weight for head in heads], dim=0)
 keys.shape
 
 
+#|%%--%%| <yJB170Kh8I|GIgNifeMDM>
+
+import re
+line ="Name: IQVR/2"
+name = re.split(r'/\d+', line.split('Name: ')[1].strip())[0]
+print(name)
+
+#|%%--%%| <GIgNifeMDM|SAvSCv0qOQ>
+
+import gzip
+with gzip.open("./data/crap.msp.gz", "rt") as g:
+    with open("test_data.msp", "w") as f:
+        for _ in range(20000):
+            f.write(g.readline())
+
+#|%%--%%| <SAvSCv0qOQ|fGrZEKAYYM>
+
+path = Path("./data/").glob("*Borrelia*")
+with gzip.open(next(path), "rt") as g:
+    print(g.read()[:1000])
+
+#|%%--%%| <fGrZEKAYYM|8tCeu4nZXE>
+
+import gzip
+import os
+from pathlib import Path
+path = Path("./data/")
+for p in path.glob("*.msp.gz"):
+    with gzip.open(p, "rt") as g:
+        print(f"file: {p.name} | filesize: {os.path.getsize(p)*1e-6:.2f}\nfirst 10 line: {g.readlines(10)}")
+
+#|%%--%%| <8tCeu4nZXE|pDR15LiEhj>
+
+import data_processor
+from torch.utils.data import DataLoader, Dataset
+from importlib import reload
+
+reload(data_processor)
+
+class MSPLoader(Dataset):
+    """Reads msp.gz files, if their sizes are below the max_size(in MB)"""
+    def __init__(self, max_size=10):
+        super().__init__()
+        self.path = Path(data_dir)
+        self.spectra = []
+
+        for p in self.path.glob("*.msp.gz"):
+            if os.path.getsize(p)*1e-6 > max_size:
+                continue
+            print(f"file: {p} | filesize: {os.path.getsize(p)*1e-6:.2f}")
+            self.spectra.append(parse_msp_gz(p))
+
+    def __len__(self):
+        l = 0
+        for s in self.spectra:
+            l += len(s)
+        return l
+
+#|%%--%%| <pDR15LiEhj|bzqbI6kB7f>
+
+msp = MSPLoader()
+print(len(msp))
+
+#|%%--%%| <bzqbI6kB7f|2tZNRNQ72A>
