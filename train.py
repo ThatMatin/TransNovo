@@ -1,3 +1,4 @@
+from logging import shutdown
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -17,6 +18,7 @@ dropout = 0.2
 activation = nn.ReLU()
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 data_dir = './data/'
+aa_csv = './data/amino_acids.csv'
 print(f'using device {device}')
 
 #|%%--%%| <BP1Q2E56wH|yxh8vl6HXU>
@@ -181,39 +183,126 @@ import os
 from pathlib import Path
 path = Path("./data/")
 for p in path.glob("*.msp.gz"):
-    with gzip.open(p, "rt") as g:
-        print(f"file: {p.name} | filesize: {os.path.getsize(p)*1e-6:.2f}\nfirst 10 line: {g.readlines(10)}")
+    with gzip.open(p, "rt") as g: print(f"file: {p.name} | filesize: {os.path.getsize(p)*1e-6:.2f}\nfirst 10 line: {g.readlines(10)}")
 
 #|%%--%%| <8tCeu4nZXE|pDR15LiEhj>
-
 import data_processor
-from torch.utils.data import DataLoader, Dataset
 from importlib import reload
-
 reload(data_processor)
+from torch.utils.data import DataLoader, Dataset
 
 class MSPLoader(Dataset):
     """Reads msp.gz files, if their sizes are below the max_size(in MB)"""
     def __init__(self, max_size=10):
         super().__init__()
-        self.path = Path(data_dir)
-        self.spectra = []
+        self._path = Path(data_dir)
+        self._spectra = []
+        self.X = None
+        self.Y = None
 
-        for p in self.path.glob("*.msp.gz"):
+        # NOTE: Read in the msp files and add all the samples to spectra
+        for p in self._path.glob("*.msp.gz"):
             if os.path.getsize(p)*1e-6 > max_size:
                 continue
-            print(f"file: {p} | filesize: {os.path.getsize(p)*1e-6:.2f}")
-            self.spectra.append(parse_msp_gz(p))
+            print(f"*> reading file: {p} | size: {os.path.getsize(p)*1e-6:.2f}")
+            self._spectra += data_processor.parse_msp_gz(p)
+
+        # NOTE: Tensorify the data: N * S * 2
+        # S is the max spectrum length -> M_X
+        M_X, M_Y = self.get_maxes()
+        names, spectra = [], []
+        for name, spectrum in self._spectra:
+            # NOTE: Expand tensors to comply with length
+            y_offset = M_Y - len(name)
+            if y_offset:
+                name += y_offset*[0]
+            names.append(name)
+            offset = M_X - len(spectrum)
+            if offset:
+                spectrum += offset*[(-1, -1)]
+            spectra.append(spectrum)
+        self.X = torch.tensor(spectra)
+        self.Y = torch.tensor(names)
+
+    def get_maxes(self):
+        MAX_X, MAX_Y = 0, 0
+        for spectrum in self._spectra:
+            MAX_X = max(MAX_X, len(spectrum[1]))
+            MAX_Y = max(MAX_Y, len(spectrum[0]))
+        return MAX_X, MAX_Y
 
     def __len__(self):
-        l = 0
-        for s in self.spectra:
-            l += len(s)
-        return l
+        if self.X is not None:
+            return self.X.shape[0]
+        else:
+            return len(self._spectra)
 
-#|%%--%%| <pDR15LiEhj|bzqbI6kB7f>
+    def __getitem__(self, index):
+        return self.X[index], self.Y[index]
 
-msp = MSPLoader()
+    def __getitems__(self, index):
+        return self.X[index], self.Y[index]
+
+
+#|%%--%%| <pDR15LiEhj|YvQnWIl8kc>
+
+msp = MSPLoader(10)
+
+#|%%--%%| <YvQnWIl8kc|bzqbI6kB7f>
+
 print(len(msp))
+x, y = msp[100]
+print(msp[[2, 3, 1]])
+print(f"max peaks {msp.get_maxes()}")
 
-#|%%--%%| <bzqbI6kB7f|2tZNRNQ72A>
+#|%%--%%| <bzqbI6kB7f|EwhNTPOZGk>
+
+dl = DataLoader(msp, 32, True)
+
+#|%%--%%| <EwhNTPOZGk|GLrOHDxuGP>
+
+for X,Y in dl:
+    print(X.shape, Y.shape)
+    break
+
+#|%%--%%| <GLrOHDxuGP|ylfGB0yhje>
+
+d = ([32, 23, 23],[(332,233), (233, 434), (323, 234)])
+e = ([3, 3, 3],[(33, 443), (32, 432), (32,23), (33, 34), (33, 23)])
+f = ([3, 2, 4],[ (33, 23)])
+l = [d, e, f]
+length = 5
+names, spectra = [], []
+for n, s in l:
+    names.append(n)
+    offset = length - len(s)
+    if offset:
+        s += offset*[(-1, -1)]
+    spectra.append(s)
+a = torch.tensor(spectra)
+b = torch.tensor(names)
+b.shape, a.shape
+a
+
+#|%%--%%| <ylfGB0yhje|DoEe7Znkyt>
+
+s = 5*[(-1, -2)]
+s
+
+#|%%--%%| <DoEe7Znkyt|yfaIhmjstg>
+
+a = data_processor.parse_msp_gz("./data/Borrelia burgdorferi.msp.gz")
+a[1]
+
+#|%%--%%| <yfaIhmjstg|2tZNRNQ72A>
+
+DL = DataLoader(msp,batch_size)
+for X,Y in DL:
+    print(X,Y)
+#|%%--%%| <2tZNRNQ72A|tfMQYzNRwc>
+
+import data_processor
+from importlib import reload
+reload(data_processor)
+enc, dec = data_processor.get_AA_Dec_Enc(aa_csv)
+dec(enc("ARIK"))
