@@ -1,0 +1,7 @@
+.jukit/
+data/
+
+__pycache__
+snippets.py
+
+*.pth
