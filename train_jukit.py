@@ -14,14 +14,14 @@ import data_processor
 
 #|%%--%%| <hVaifVrkF7|BP1Q2E56wH>
 
-N_epochs = 200
+N_epochs = 10
 lr = 1e-4
 batch_size = 128
-d_model = 128
+d_model = 32
 n_heads = 8
 d_key = d_model//n_heads
 d_val = d_model//n_heads
-d_ff = 1024
+d_ff = 128
 dropout = 0.2
 activation = nn.ReLU()
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -252,6 +252,9 @@ class TransNovo(nn.Module):
         loss = F.cross_entropy(logits_flat, tgt_output_flat)
         return probs, loss
 
+    def generate(self, x):
+
+
 
 #|%%--%%| <yxh8vl6HXU|YvQnWIl8kc>
 
@@ -308,7 +311,11 @@ print(f"training time: {time.time() - s_time: 0.1f}s")
 torch.save(model.state_dict(), model_save_path)
 print(f"Saved to {model_save_path}")
 
-#|%%--%%| <x9JPoCiRId|E8AEbcolc9>
+#|%%--%%| <x9JPoCiRId|78sPz0FTOb>
+
+model.load_state_dict(torch.load(model_save_path))
+
+#|%%--%%| <78sPz0FTOb|E8AEbcolc9>
 
 import matplotlib.pyplot as plt
 plt.plot(torch.tensor(lossi).view(-1, 1000).mean(1) )
