@@ -1,27 +1,130 @@
-from logging import shutdown
+import os, time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
+from torch.utils.data import DataLoader, Dataset, random_split
+from torch.optim import Adam
+from importlib import reload
+from pathlib import Path
+from typing import Optional
+from tqdm.auto import tqdm
+
+import data_processor
 
 #|%%--%%| <hVaifVrkF7|BP1Q2E56wH>
 
-input_dim = 20
-batch_size = 16
-d_model = 32
+N_epochs = 200
+lr = 1e-4
+batch_size = 128
+d_model = 128
 n_heads = 8
 d_key = d_model//n_heads
 d_val = d_model//n_heads
-d_ff = 128
-n_enc_layer = 2
-n_dec_layer = 3
+d_ff = 1024
 dropout = 0.2
 activation = nn.ReLU()
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 data_dir = './data/'
 aa_csv = './data/amino_acids.csv'
+model_save_path = 'transnovo.pth'
+vocab_size = 25
 print(f'using device {device}')
 
-#|%%--%%| <BP1Q2E56wH|yxh8vl6HXU>
+#|%%--%%| <BP1Q2E56wH|pDR15LiEhj>
+
+reload(data_processor)
+# TODO: Improve speed by tensorifying as per file read
+class MSPLoader(Dataset):
+    """Reads msp.gz files, if their sizes are below the max_size(in MB)"""
+    def __init__(self, max_size=10):
+        super().__init__()
+        self.MAX_X = 0
+        self.MAX_Y = 0
+        self.X = torch.tensor([])
+        self.Y = torch.tensor([])
+
+        # NOTE: Read in the msp files and add all the samples to spectra
+        _spectra = []
+        for p in Path(data_dir).glob("*.msp.gz"):
+            if os.path.getsize(p)*1e-6 > max_size:
+                continue
+            print(f"*> reading file: {p} | size: {os.path.getsize(p)*1e-6:.2f}")
+            _spectra += data_processor.parse_msp_gz(p)
+
+        # NOTE: Get max lenght of spectrum and peptide sequence
+        for spectrum in _spectra:
+            self.MAX_X = max(self.MAX_X, len(spectrum[1]))
+            self.MAX_Y = max(self.MAX_Y, len(spectrum[0]))
+        self.MAX_Y += 2 # padding accounted
+
+        names, spectra = [], []
+        for name, spectrum in _spectra:
+            # NOTE: Pad and expand tensors to comply with length
+            name = [0] + name + [0]
+            y_offset = self.MAX_Y - len(name)
+            if y_offset:
+                name += y_offset*[0]
+            names.append(name)
+            offset = self.MAX_X - len(spectrum)
+            if offset:
+                spectrum += offset*[(0, 0)]
+            spectra.append(spectrum)
+        self.X = torch.tensor(spectra).to(device)
+        self.Y = torch.tensor(names).to(device)
+
+
+    def __len__(self):
+        return self.X.shape[0]
+
+    def __getitem__(self, index):
+        if torch.is_tensor(index):
+            index = index.tolist()
+        return self.X[index], self.Y[index]
+
+
+#|%%--%%| <pDR15LiEhj|yxh8vl6HXU>
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-np.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        return self.pe[:, :x.size(1), :]
+
+class PeptideEmbedding(nn.Module):
+    def __init__(self, vocab_size, d_model):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.pos_embd = PositionalEncoding(d_model, 100)
+
+    def forward(self, x):
+        tok_emb = self.embedding(x) + torch.sqrt(torch.tensor(self.embedding.weight.size(1), dtype=torch.float32))
+        pos_emb = self.pos_embd(x)
+        return tok_emb + pos_emb
+
+
+class SpectrumEmbedding(nn.Module):
+    """
+    Receives a spectrum, discretizes the intensity and 
+    creates an embedding
+    """
+    def __init__(self):
+        super().__init__()
+        self.embedding = nn.Linear(2, d_model)
+
+    def forward(self, x):
+        x = self.embedding(x) * torch.sqrt(torch.tensor(
+                self.embedding.weight.size(1), dtype=torch.float32))
+        return x
+
 
 class AttentionHead(nn.Module):
     def __init__(self, is_masked=False):
@@ -32,19 +135,23 @@ class AttentionHead(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.is_masked = is_masked
 
-    def forward(self, x):
-        B, T, C = x.shape
-        K = self.key(x)
-        Q = self.query(x)
-        V = self.value(x)
+    def forward(self, q: torch.Tensor, kv: Optional[torch.Tensor] = None):
+        if kv is None:
+            kv = q
+        _, T, C = q.shape
+        K = self.key(kv)
+        V = self.value(kv)
+        Q = self.query(q)
         W = (Q @ K.transpose(-2, -1))/ C**0.5
+        # TODO: filter zero tokens
         if self.is_masked:
             # TODO: Check if it's possible to register the buffer and reuse
-            W = W.masked_fill(torch.tril(torch.ones((T, T))) == 0, float('-inf'))
+            W = W.masked_fill(torch.tril(torch.ones((T, T), device=device)) == 0, float('-inf'))
         W = torch.softmax(W, dim=-1)
         W = self.dropout(W)
         out = W @ V
         return out
+
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, is_masked=False):
@@ -53,10 +160,11 @@ class MultiHeadAttention(nn.Module):
         self.proj = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
-        out = torch.concat([h(x) for h in self.heads], dim=-1)
+    def forward(self, q, kv):
+        out = torch.concat([h(q, kv) for h in self.heads], dim=-1)
         out = self.dropout(self.proj(out))
         return out
+
 
 class AttentionBlock(nn.Module):
     def __init__(self, is_masked=False):
@@ -65,10 +173,11 @@ class AttentionBlock(nn.Module):
         self.ln1 = nn.LayerNorm(d_model)
         self.ln2 = nn.LayerNorm(d_model)
 
-    def forward(self, x):
-        x = x + self.MHA(self.ln1(x))
-        out = self.ln2(x)
+    def forward(self, q, kv=None):
+        q = q + self.MHA(self.ln1(q), kv)
+        out = self.ln2(q)
         return out
+
 
 class FeedForward(nn.Module):
     def __init__(self):
@@ -84,6 +193,7 @@ class FeedForward(nn.Module):
         out = self.net(x)
         return out
 
+
 class FeedForwardBlock(nn.Module):
     def __init__(self):
         super().__init__()
@@ -95,6 +205,7 @@ class FeedForwardBlock(nn.Module):
         out = self.ln(out)
         return out
 
+
 class Encoder(nn.Module):
     def __init__(self):
         super().__init__()
@@ -102,207 +213,103 @@ class Encoder(nn.Module):
         self.ff = FeedForwardBlock()
 
     def forward(self, x):
-        out = self.ff(self.at(x))
-        return out
+        return self.ff(self.at(x))
 
+
+class Decoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.masked_at = AttentionBlock(is_masked=True)
+        self.enc_dec_at = AttentionBlock()
+        self.ff = FeedForward()
+
+    def forward(self, dec_in, enc_out):
+        at_out = self.masked_at(dec_in)
+        out = self.enc_dec_at(at_out, enc_out)
+        return self.ff(out)
+        
 
 class TransNovo(nn.Module):
     def __init__(self):
-        pass
-
-    def forward(self, x, targets=None):
-        pass
-
-
-#|%%--%%| <yxh8vl6HXU|LKAkSrBI89>
-
-enc = Encoder()
-x = torch.randn((batch_size, 20, d_model))
-out = enc(x)
-out.shape
-print(sum([p.numel() for p in enc.parameters()]))
-
-#|%%--%%| <LKAkSrBI89|T4hzN4yUll>
-
-ma = MultiHeadAttention()
-x = torch.randn((batch_size, 20, d_model))
-print(sum([p.numel() for p in ma.parameters()]))
-ma(x).shape
-
-#|%%--%%| <T4hzN4yUll|7eG7t7Pu3z>
-
-a = AttentionHead(is_masked=True)
-x = torch.randn((batch_size, 20, d_model))
-a(x).shape
-sum([p.numel() for p in a.parameters()])
-
-#|%%--%%| <7eG7t7Pu3z|mvEmCLtZYf>
-
-t = torch.arange(24).view((3, 4, 2))
-u = t.unsqueeze(1)
-u.expand(-1, 2, -1, -1)
-#|%%--%%| <mvEmCLtZYf|1xR9pd4kTl>
-
-# number of weights in a linear model if a new dimension gets added to the input
-i = torch.randn((2, 2, 3, 4))
-l = nn.Linear(10, 10, bias=False)
-print(sum([p.numel() for p in l.parameters()]))
-
-#|%%--%%| <1xR9pd4kTl|yJB170Kh8I>
-
-heads = [AttentionHead() for _ in range(n_heads)]
-keys = torch.stack([head.key.weight for head in heads], dim=0)
-keys.shape
-
-
-#|%%--%%| <yJB170Kh8I|GIgNifeMDM>
-
-import re
-line ="Name: IQVR/2"
-name = re.split(r'/\d+', line.split('Name: ')[1].strip())[0]
-print(name)
-
-#|%%--%%| <GIgNifeMDM|SAvSCv0qOQ>
-
-import gzip
-with gzip.open("./data/crap.msp.gz", "rt") as g:
-    with open("test_data.msp", "w") as f:
-        for _ in range(20000):
-            f.write(g.readline())
-
-#|%%--%%| <SAvSCv0qOQ|fGrZEKAYYM>
-
-path = Path("./data/").glob("*Borrelia*")
-with gzip.open(next(path), "rt") as g:
-    print(g.read()[:1000])
-
-#|%%--%%| <fGrZEKAYYM|8tCeu4nZXE>
-
-import gzip
-import os
-from pathlib import Path
-path = Path("./data/")
-for p in path.glob("*.msp.gz"):
-    with gzip.open(p, "rt") as g: print(f"file: {p.name} | filesize: {os.path.getsize(p)*1e-6:.2f}\nfirst 10 line: {g.readlines(10)}")
-
-#|%%--%%| <8tCeu4nZXE|pDR15LiEhj>
-import data_processor
-from importlib import reload
-reload(data_processor)
-from torch.utils.data import DataLoader, Dataset
-
-class MSPLoader(Dataset):
-    """Reads msp.gz files, if their sizes are below the max_size(in MB)"""
-    def __init__(self, max_size=10):
         super().__init__()
-        self._path = Path(data_dir)
-        self._spectra = []
-        self.X = None
-        self.Y = None
+        self.peptide_emb = PeptideEmbedding(vocab_size, d_model)
+        self.spectrum_emb = SpectrumEmbedding()
+        self.enc = Encoder()
+        self.dec = Decoder()
+        self.ll = nn.Linear(d_model, vocab_size)
 
-        # NOTE: Read in the msp files and add all the samples to spectra
-        for p in self._path.glob("*.msp.gz"):
-            if os.path.getsize(p)*1e-6 > max_size:
-                continue
-            print(f"*> reading file: {p} | size: {os.path.getsize(p)*1e-6:.2f}")
-            self._spectra += data_processor.parse_msp_gz(p)
+    def forward(self, x, targets: torch.Tensor):
+        tgt_input = targets[:, :-1]
+        tgt_output = targets[:, 1:]
 
-        # NOTE: Tensorify the data: N * S * 2
-        # S is the max spectrum length -> M_X
-        M_X, M_Y = self.get_maxes()
-        names, spectra = [], []
-        for name, spectrum in self._spectra:
-            # NOTE: Expand tensors to comply with length
-            y_offset = M_Y - len(name)
-            if y_offset:
-                name += y_offset*[0]
-            names.append(name)
-            offset = M_X - len(spectrum)
-            if offset:
-                spectrum += offset*[(-1, -1)]
-            spectra.append(spectrum)
-        self.X = torch.tensor(spectra)
-        self.Y = torch.tensor(names)
+        x = self.enc(self.spectrum_emb(x))
+        out = self.dec(self.peptide_emb(tgt_input), x)
+        logits = self.ll(out)
+        probs = F.softmax(logits, dim=-1)
 
-    def get_maxes(self):
-        MAX_X, MAX_Y = 0, 0
-        for spectrum in self._spectra:
-            MAX_X = max(MAX_X, len(spectrum[1]))
-            MAX_Y = max(MAX_Y, len(spectrum[0]))
-        return MAX_X, MAX_Y
-
-    def __len__(self):
-        if self.X is not None:
-            return self.X.shape[0]
-        else:
-            return len(self._spectra)
-
-    def __getitem__(self, index):
-        return self.X[index], self.Y[index]
-
-    def __getitems__(self, index):
-        return self.X[index], self.Y[index]
+        logits_flat = logits.view(-1, vocab_size)
+        tgt_output_flat = tgt_output.reshape(-1)
+        loss = F.cross_entropy(logits_flat, tgt_output_flat)
+        return probs, loss
 
 
-#|%%--%%| <pDR15LiEhj|YvQnWIl8kc>
+#|%%--%%| <yxh8vl6HXU|YvQnWIl8kc>
 
-msp = MSPLoader(10)
+# Preparing data
+msp = MSPLoader(30)
+print(f"Total number of data: {len(msp)}")
+dataloader = DataLoader(msp, batch_size, True, pin_memory=True)
 
-#|%%--%%| <YvQnWIl8kc|bzqbI6kB7f>
+#|%%--%%| <YvQnWIl8kc|EQ8E8fH6Is>
 
-print(len(msp))
-x, y = msp[100]
-print(msp[[2, 3, 1]])
-print(f"max peaks {msp.get_maxes()}")
+model = TransNovo().to(device)
+# TODO: implement paper's lrate formula
+optimizer = Adam(model.parameters(), lr)
+param_count = sum([p.numel() for p in model.parameters()])
+print(f"total number of parameters: {param_count}")
 
-#|%%--%%| <bzqbI6kB7f|EwhNTPOZGk>
+#|%%--%%| <EQ8E8fH6Is|Ixnf9hkxNS>
 
-dl = DataLoader(msp, 32, True)
+# check all datatypes are float 32 and on cuda
+for name, param in model.named_parameters():
+    if param.dtype != torch.float32:
+        print(f"parameter {name} - {param.dtype}")
+    if str(param.device) != "cuda:0":
+        print(f"parameter {name} is on device {param.device}")
 
-#|%%--%%| <EwhNTPOZGk|GLrOHDxuGP>
+#|%%--%%| <Ixnf9hkxNS|MwGEjiuQ9m>
 
-for X,Y in dl:
-    print(X.shape, Y.shape)
-    break
+train_size = int(0.8*len(msp))
+test_size = len(msp) - train_size
+train_ds, test_ds = random_split(msp, [train_size, test_size])
+train_dl = DataLoader(train_ds, batch_size, shuffle=True)
+test_dl = DataLoader(test_ds, batch_size, shuffle=True)
 
-#|%%--%%| <GLrOHDxuGP|ylfGB0yhje>
 
-d = ([32, 23, 23],[(332,233), (233, 434), (323, 234)])
-e = ([3, 3, 3],[(33, 443), (32, 432), (32,23), (33, 34), (33, 23)])
-f = ([3, 2, 4],[ (33, 23)])
-l = [d, e, f]
-length = 5
-names, spectra = [], []
-for n, s in l:
-    names.append(n)
-    offset = length - len(s)
-    if offset:
-        s += offset*[(-1, -1)]
-    spectra.append(s)
-a = torch.tensor(spectra)
-b = torch.tensor(names)
-b.shape, a.shape
-a
+#|%%--%%| <MwGEjiuQ9m|x9JPoCiRId>
 
-#|%%--%%| <ylfGB0yhje|DoEe7Znkyt>
+lossi = []
+loss = torch.tensor([])
 
-s = 5*[(-1, -2)]
-s
+s_time = time.time()
+for epoch in tqdm(range(N_epochs)):
+    model.train()
+    for X,Y in train_dl:
+        _, loss = model(X, Y)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        lossi.append(loss.log10().item())
 
-#|%%--%%| <DoEe7Znkyt|yfaIhmjstg>
+    if epoch % 10 == 0:
+        print(f"epoch: {epoch} | train loss: {loss.item():.4f}")
 
-a = data_processor.parse_msp_gz("./data/Borrelia burgdorferi.msp.gz")
-a[1]
+print(f"training time: {time.time() - s_time: 0.1f}s")
+torch.save(model.state_dict(), model_save_path)
+print(f"Saved to {model_save_path}")
 
-#|%%--%%| <yfaIhmjstg|2tZNRNQ72A>
+#|%%--%%| <x9JPoCiRId|E8AEbcolc9>
 
-DL = DataLoader(msp,batch_size)
-for X,Y in DL:
-    print(X,Y)
-#|%%--%%| <2tZNRNQ72A|tfMQYzNRwc>
+import matplotlib.pyplot as plt
+plt.plot(torch.tensor(lossi).view(-1, 1000).mean(1) )
 
-import data_processor
-from importlib import reload
-reload(data_processor)
-enc, dec = data_processor.get_AA_Dec_Enc(aa_csv)
-dec(enc("ARIK"))
