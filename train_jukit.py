@@ -1,8 +1,8 @@
 import os, time
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset, random_split
 from torch.optim import Adam
 from importlib import reload
@@ -14,16 +14,15 @@ import data_processor
 
 #|%%--%%| <hVaifVrkF7|BP1Q2E56wH>
 
-N_epochs = 10
+N_epochs = 100
 lr = 1e-4
 batch_size = 128
-d_model = 32
+d_model = 128
 n_heads = 8
 d_key = d_model//n_heads
 d_val = d_model//n_heads
-d_ff = 128
-dropout = 0.2
-activation = nn.ReLU()
+d_ff = 1024
+dropout = 0.1
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 data_dir = './data/'
 aa_csv = './data/amino_acids.csv'
@@ -104,11 +103,12 @@ class PeptideEmbedding(nn.Module):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.pos_embd = PositionalEncoding(d_model, 100)
+        self.ln = nn.LayerNorm(d_model)
 
     def forward(self, x):
         tok_emb = self.embedding(x) + torch.sqrt(torch.tensor(self.embedding.weight.size(1), dtype=torch.float32))
         pos_emb = self.pos_embd(x)
-        return tok_emb + pos_emb
+        return self.ln(tok_emb + pos_emb)
 
 
 class SpectrumEmbedding(nn.Module):
@@ -119,11 +119,12 @@ class SpectrumEmbedding(nn.Module):
     def __init__(self):
         super().__init__()
         self.embedding = nn.Linear(2, d_model)
+        self.ln = nn.LayerNorm(d_model)
 
     def forward(self, x):
-        x = self.embedding(x) * torch.sqrt(torch.tensor(
+        out = self.embedding(x) * torch.sqrt(torch.tensor(
                 self.embedding.weight.size(1), dtype=torch.float32))
-        return x
+        return self.ln(out)
 
 
 class AttentionHead(nn.Module):
@@ -148,7 +149,7 @@ class AttentionHead(nn.Module):
             # TODO: Check if it's possible to register the buffer and reuse
             W = W.masked_fill(torch.tril(torch.ones((T, T), device=device)) == 0, float('-inf'))
         W = torch.softmax(W, dim=-1)
-        W = self.dropout(W)
+        # W = self.dropout(W)
         out = W @ V
         return out
 
@@ -170,13 +171,13 @@ class AttentionBlock(nn.Module):
     def __init__(self, is_masked=False):
         super().__init__()
         self.MHA = MultiHeadAttention(is_masked)
-        self.ln1 = nn.LayerNorm(d_model)
         self.ln2 = nn.LayerNorm(d_model)
 
     def forward(self, q, kv=None):
-        q = q + self.MHA(self.ln1(q), kv)
-        out = self.ln2(q)
-        return out
+        if kv == None:
+            kv = q
+        res = q + self.MHA(q, kv)
+        return self.ln2(res)
 
 
 class FeedForward(nn.Module):
@@ -184,7 +185,7 @@ class FeedForward(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
                 nn.Linear(d_model, d_ff),
-                activation,
+                nn.ReLU(),
                 nn.Linear(d_ff, d_model),
                 nn.Dropout(dropout),
                 )
@@ -240,17 +241,10 @@ class TransNovo(nn.Module):
 
     def forward(self, x, targets: torch.Tensor):
         tgt_input = targets[:, :-1]
-        tgt_output = targets[:, 1:]
-
         encoded_x = self.enc(self.spectrum_emb(x))
         out = self.dec(self.peptide_emb(tgt_input), encoded_x)
-        logits = self.ll(out)
-        probs = F.softmax(logits, dim=-1)
+        return self.ll(out)
 
-        logits_flat = logits.view(-1, vocab_size)
-        tgt_output_flat = tgt_output.reshape(-1)
-        loss = F.cross_entropy(logits_flat, tgt_output_flat)
-        return probs, loss
 
     @torch.no_grad()
     def generate(self, x):
@@ -278,7 +272,7 @@ class TransNovo(nn.Module):
 #|%%--%%| <yxh8vl6HXU|YvQnWIl8kc>
 
 # Preparing data
-msp = MSPLoader(10)
+msp = MSPLoader(20)
 print(f"Total number of data: {len(msp)}")
 # TODO: Check memory pinning
 dataloader = DataLoader(msp, batch_size, True)
@@ -287,7 +281,9 @@ dataloader = DataLoader(msp, batch_size, True)
 
 model = TransNovo().to(device)
 # TODO: implement paper's lrate formula
-optimizer = Adam(model.parameters(), lr)
+# lr = d_model**-0.5 * min(1**-0.5, 10**1-.5)
+optimizer = Adam(model.parameters(), lr, (0.9, 0.98), 1e-9)
+loss_fn = nn.CrossEntropyLoss()
 param_count = sum([p.numel() for p in model.parameters()])
 print(f"total number of parameters: {param_count}")
 
@@ -308,29 +304,97 @@ train_ds, test_ds = random_split(msp, [train_size, test_size])
 train_dl = DataLoader(train_ds, batch_size, shuffle=True)
 test_dl = DataLoader(test_ds, batch_size, shuffle=True)
 
-#|%%--%%| <MwGEjiuQ9m|x9JPoCiRId>
+#|%%--%%| <MwGEjiuQ9m|pE2B6PAjh4>
 
-lossi = []
-loss = torch.tensor([])
+def print_grad(name, grad):
+    if torch.isnan(grad).any():
+        print(f"NaN detected in gradient for {name}!")
+
+# Register hooks on all parameters with their names
+for name, param in model.named_parameters():
+    param.register_hook(lambda grad, name=name: print_grad(name, grad))
+
+#|%%--%%| <pE2B6PAjh4|x9JPoCiRId>
+
+train_lossi = []
+test_lossi = []
+train_norms = []
 
 s_time = time.time()
-for epoch in tqdm(range(N_epochs)):
+for epoch in tqdm(range(10)):
+
     model.train()
+    loss_list = []
     for X,Y in train_dl:
-        _, loss = model(X, Y)
-        optimizer.zero_grad()
+        logits = model(X, Y)
+        # FIX: Implement discretization to address troubly data
+        if torch.isnan(logits).any():
+            continue
+
+        optimizer.zero_grad(True)
+
+        tgt_output = Y[:, 1:]
+        logits_flat = logits.view(-1, vocab_size)
+        tgt_output_flat = tgt_output.reshape(-1)
+
+        loss = loss_fn(logits_flat, tgt_output_flat)
+
         loss.backward()
         optimizer.step()
-        lossi.append(loss.log10().item())
+
+        loss_list.append(loss.mean())
+
+        # norms observation
+        norms = []
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                norms.append(param.grad.norm())
+        train_norms.append(sum(norms)/len(norms))
+
+    train_batch_loss = torch.mean(torch.tensor(loss_list))
+    train_lossi.append(train_batch_loss)
+
+    with torch.inference_mode():
+        model.eval()
+        loss_list = []
+        for X,Y in test_dl:
+            logits = model(X, Y)
+            # FIX: same as above
+            if torch.isnan(logits).any():
+                continue
+
+            tgt_output = Y[:, 1:]
+            logits_flat = logits.view(-1, vocab_size)
+            tgt_output_flat = tgt_output.reshape(-1)
+            loss = loss_fn(logits_flat, tgt_output_flat)
+
+            loss_list.append(loss.mean())
+
+    test_batch_loss = torch.mean(torch.tensor(loss_list))
+    test_lossi.append(test_batch_loss)
+
+    # Update learning rate
+    lr = d_model**-0.5 * min((epoch+1)**-0.5, (epoch + 1) * 10**1-.5)
+    for p in optimizer.param_groups:
+        p['lr'] = lr
 
     if epoch % 1 == 0:
-        print(f"epoch: {epoch} | train loss: {loss.item():.4f}")
+        print(f"epoch: {epoch} | train loss: {train_batch_loss:.4f} | test loss: {test_batch_loss:.4f}")
+
 
 print(f"training time: {time.time() - s_time: 0.1f}s")
+
+#|%%--%%| <x9JPoCiRId|RZUjcGa99k>
+
+import matplotlib.pyplot as plt
+plt.plot(torch.log10(torch.tensor(train_norms)))
+
+#|%%--%%| <RZUjcGa99k|1O2swP2h1L>
+
 torch.save(model.state_dict(), model_save_path)
 print(f"Saved to {model_save_path}")
 
-#|%%--%%| <x9JPoCiRId|78sPz0FTOb>
+#|%%--%%| <1O2swP2h1L|78sPz0FTOb>
 
 model.load_state_dict(torch.load(model_save_path))
 
@@ -338,12 +402,12 @@ model.load_state_dict(torch.load(model_save_path))
 
 
 enc, dec = data_processor.get_AA_Dec_Enc(aa_csv)
-X, Y = msp[-100]
+X, Y = msp[200]
 print(model.generate(X))
 dec(Y.tolist())
 
 #|%%--%%| <E2JCCJvk1v|E8AEbcolc9>
 
 import matplotlib.pyplot as plt
-plt.plot(torch.tensor(lossi).view(-1, 1000).mean(1) )
+plt.plot(torch.tensor(train_lossi).view(-1, 1000).mean(1) )
 
