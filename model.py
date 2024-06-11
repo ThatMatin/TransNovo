@@ -178,7 +178,7 @@ class Decoder(nn.Module):
         at_out = self.masked_at(dec_in)
         out = self.enc_dec_at(at_out, enc_out)
         return self.ff(out)
-        
+
 
 class TransNovo(nn.Module):
     def __init__(self):
@@ -193,8 +193,8 @@ class TransNovo(nn.Module):
         tgt_input = targets[:, :-1]
         tgt_output = targets[:, 1:]
 
-        x = self.enc(self.spectrum_emb(x))
-        out = self.dec(self.peptide_emb(tgt_input), x)
+        encoded_x = self.enc(self.spectrum_emb(x))
+        out = self.dec(self.peptide_emb(tgt_input), encoded_x)
         logits = self.ll(out)
         probs = F.softmax(logits, dim=-1)
 
@@ -202,6 +202,30 @@ class TransNovo(nn.Module):
         tgt_output_flat = tgt_output.reshape(-1)
         loss = F.cross_entropy(logits_flat, tgt_output_flat)
         return probs, loss
+
+    @torch.no_grad()
+    def generate(self, x):
+        self.eval()
+
+        if len(x.shape) == 2:
+            x = x.unsqueeze(0)
+
+        _, pep_decoder = data_processor.get_AA_Dec_Enc(aa_csv)
+
+        out = []
+        dec_in = torch.zeros((1 ,1),device=device, dtype=torch.int64)
+        for _ in range(100):
+            encoded_x = self.enc(self.spectrum_emb(x))
+            dec_out = self.dec(self.peptide_emb(dec_in), encoded_x)
+            probs = F.softmax(self.ll(dec_out), dim=-1)
+            next_aa = torch.multinomial(probs.squeeze(), num_samples=1, replacement=True).item()
+
+            out.append(next_aa)
+            if next_aa == 0:
+                break
+
+        return pep_decoder(out)
+
 
 # Dataset
 
@@ -258,7 +282,7 @@ class MSPLoader(Dataset):
 
 msp = MSPLoader(30)
 print(f"Total length of data: {len(msp)}")
-dataloader = DataLoader(msp, batch_size, True, pin_memory=True)
+dataloader = DataLoader(msp, batch_size, True)
 
 model = TransNovo().to(device)
 # TODO: implement paper's lrate formula

@@ -242,8 +242,8 @@ class TransNovo(nn.Module):
         tgt_input = targets[:, :-1]
         tgt_output = targets[:, 1:]
 
-        x = self.enc(self.spectrum_emb(x))
-        out = self.dec(self.peptide_emb(tgt_input), x)
+        encoded_x = self.enc(self.spectrum_emb(x))
+        out = self.dec(self.peptide_emb(tgt_input), encoded_x)
         logits = self.ll(out)
         probs = F.softmax(logits, dim=-1)
 
@@ -252,16 +252,36 @@ class TransNovo(nn.Module):
         loss = F.cross_entropy(logits_flat, tgt_output_flat)
         return probs, loss
 
+    @torch.no_grad()
     def generate(self, x):
+        self.eval()
 
+        if len(x.shape) == 2:
+            x = x.unsqueeze(0)
 
+        _, pep_decoder = data_processor.get_AA_Dec_Enc(aa_csv)
 
+        out = []
+        dec_in = torch.zeros((1 ,1),device=device, dtype=torch.int64)
+        for _ in range(100):
+            encoded_x = self.enc(self.spectrum_emb(x))
+            dec_out = self.dec(self.peptide_emb(dec_in), encoded_x)
+            probs = F.softmax(self.ll(dec_out), dim=-1)
+            next_aa = torch.multinomial(probs.squeeze(), num_samples=1, replacement=True).item()
+            
+            out.append(next_aa)
+            if next_aa == 0:
+                break
+
+        return pep_decoder(out)
+            
 #|%%--%%| <yxh8vl6HXU|YvQnWIl8kc>
 
 # Preparing data
-msp = MSPLoader(30)
+msp = MSPLoader(10)
 print(f"Total number of data: {len(msp)}")
-dataloader = DataLoader(msp, batch_size, True, pin_memory=True)
+# TODO: Check memory pinning
+dataloader = DataLoader(msp, batch_size, True)
 
 #|%%--%%| <YvQnWIl8kc|EQ8E8fH6Is>
 
@@ -288,7 +308,6 @@ train_ds, test_ds = random_split(msp, [train_size, test_size])
 train_dl = DataLoader(train_ds, batch_size, shuffle=True)
 test_dl = DataLoader(test_ds, batch_size, shuffle=True)
 
-
 #|%%--%%| <MwGEjiuQ9m|x9JPoCiRId>
 
 lossi = []
@@ -304,7 +323,7 @@ for epoch in tqdm(range(N_epochs)):
         optimizer.step()
         lossi.append(loss.log10().item())
 
-    if epoch % 10 == 0:
+    if epoch % 1 == 0:
         print(f"epoch: {epoch} | train loss: {loss.item():.4f}")
 
 print(f"training time: {time.time() - s_time: 0.1f}s")
@@ -315,7 +334,15 @@ print(f"Saved to {model_save_path}")
 
 model.load_state_dict(torch.load(model_save_path))
 
-#|%%--%%| <78sPz0FTOb|E8AEbcolc9>
+#|%%--%%| <78sPz0FTOb|E2JCCJvk1v>
+
+
+enc, dec = data_processor.get_AA_Dec_Enc(aa_csv)
+X, Y = msp[-100]
+print(model.generate(X))
+dec(Y.tolist())
+
+#|%%--%%| <E2JCCJvk1v|E8AEbcolc9>
 
 import matplotlib.pyplot as plt
 plt.plot(torch.tensor(lossi).view(-1, 1000).mean(1) )
