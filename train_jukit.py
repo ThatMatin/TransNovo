@@ -314,23 +314,56 @@ def print_grad(name, grad):
 for name, param in model.named_parameters():
     param.register_hook(lambda grad, name=name: print_grad(name, grad))
 
-#|%%--%%| <pE2B6PAjh4|vxo2pgBRD0>
+#|%%--%%| <pE2B6PAjh4|dmifUWL5xz>
 
-ce = nn.CrossEntropyLoss()
-for X,Y in train_dl:
-    logits = model(X, Y)
-    if torch.isnan(logits).any():
-        continue
+# INFO: This block normalizes each spectrum in the batch by the average of 33% weakest intensities
 
-    tgt_output = Y[:, 1:]
-    logits_flat = logits.transpose(-2, -1)
+X, Y = msp[100: 113]
+sorted, indices = torch.sort(X[:, :, 1], descending=True)
+sorted_indices = indices.unsqueeze(-1).expand(-1, -1, 2)
+X_sorted = X.gather(1, sorted_indices)
 
-    l = ce(logits_flat, tgt_output)
-    print(l)
+# Non zero elements per spectrum (batch element)
+non_zeros_counts = X_sorted.count_nonzero(1)[:, 0]
+# start indeces of the weakest 33%
+w33_st_idxs = (2/3 * non_zeros_counts).int()
 
-    break
+# pluck the weakes 33%
+means_list = []
+for b in range(X.size(0)):
+    m = X_sorted[b, w33_st_idxs[b]:non_zeros_counts[b], 1].mean()
+    means_list.append(m)
+w33_means = torch.stack(means_list)
 
-#|%%--%%| <vxo2pgBRD0|x9JPoCiRId>
+w33_means_div = w33_means.unsqueeze(-1).unsqueeze(-1).expand_as(X).clone()
+w33_means_div[:, :, 0] = 1
+
+X_w33_normalized = X / w33_means_div
+
+# TEST:
+assert (X[:, :, 0] == X_w33_normalized[:, :, 0]).all()
+assert torch.allclose(w33_means[1] * X_w33_normalized[1, :, 1][:25], X[1, :, 1][:25])
+# print(X[1, :, 1][:25])
+# print(w33_means[1] * X_w33_normalized[1, :, 1][:25])
+#|%%--%%| <dmifUWL5xz|3C42BFPGyx>
+
+# INFO: Grass intensity discretization
+
+intensities = X_w33_normalized[:, :, 1]
+discretized = torch.zeros_like(intensities)
+discretized[intensities >= 10] = 3
+discretized[(intensities >= 2) & (intensities < 10)] = 2
+discretized[(intensities >= 0.05) & (intensities < 2)] = 1
+discretized[intensities < 0.05] = 0
+
+X_intens_disc = X_w33_normalized.clone()
+X_intens_disc[:, :, 1] = discretized
+
+# view results
+# print(X_intens_disc[3][:22])
+# print(X_w33_normalized[3][:22])
+
+#|%%--%%| <3C42BFPGyx|x9JPoCiRId>
 
 train_lossi = []
 test_lossi = []
@@ -357,7 +390,7 @@ for epoch in tqdm(range(5)):
         loss.backward()
         optimizer.step()
 
-        loss_list.append(loss.item())
+        train_lossi.append(loss.item())
 
         # norms observation
         norms = []
@@ -379,9 +412,8 @@ for epoch in tqdm(range(5)):
                 continue
 
             tgt_output = Y[:, 1:]
-            logits_flat = logits.view(-1, vocab_size)
-            tgt_output_flat = tgt_output.reshape(-1)
-            loss = loss_fn(logits_flat, tgt_output_flat)
+            logits_flat = logits.transpose(-2, -1)
+            loss = loss_fn(logits_flat, tgt_output)
 
             loss_list.append(loss.item())
 
@@ -403,12 +435,15 @@ print(f"training time: {time.time() - s_time: 0.1f}s")
 
 import matplotlib.pyplot as plt
 plt.figure(figsize=(6, 6))
-plt.subplot(2, 2, 0)
-plt.plot(torch.tensor(train_lossi))
-plt.text()
 plt.subplot(2, 2, 1)
+plt.plot(torch.tensor(train_lossi))
+plt.title("train loss")
+plt.subplot(2, 2, 2)
 plt.plot(torch.tensor(test_lossi))
+plt.title("test loss")
+plt.subplot(2, 2, 3)
 plt.plot(torch.log10(torch.tensor(train_norms)))
+plt.title("gradient norms")
 
 #|%%--%%| <RZUjcGa99k|1O2swP2h1L>
 
