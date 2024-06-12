@@ -17,7 +17,7 @@ import data_processor
 N_epochs = 100
 lr = 1e-5
 batch_size = 128
-d_model = 512
+d_model = 256
 n_heads = 8
 d_key = d_model//n_heads
 d_val = d_model//n_heads
@@ -169,6 +169,7 @@ class AttentionHead(nn.Module):
         self.query = nn.Linear(d_model, d_key, bias=False)
         self.value = nn.Linear(d_model, d_val, bias=False)
         self.dropout = nn.Dropout(dropout)
+        self.register_buffer("tril", torch.tril(torch.ones(200, 200)))
         self.is_masked = is_masked
 
     def forward(self, q: torch.Tensor, kv: Optional[torch.Tensor] = None):
@@ -184,7 +185,7 @@ class AttentionHead(nn.Module):
             # TODO: Check if it's possible to register the buffer and reuse
             W = W.masked_fill(torch.tril(torch.ones((T, T), device=device)) == 0, float('-inf'))
         W = torch.softmax(W, dim=-1)
-        # W = self.dropout(W)
+        W = self.dropout(W)
         out = W @ V
         return out
 
@@ -307,7 +308,7 @@ class TransNovo(nn.Module):
 #|%%--%%| <yxh8vl6HXU|YvQnWIl8kc>
 
 # Preparing data
-msp = MSPLoader(400)
+msp = MSPLoader(100)
 print(f"Total number of data: {len(msp)}")
 # TODO: Check memory pinning
 dataloader = DataLoader(msp, batch_size, True)
@@ -405,16 +406,12 @@ test_lossi = []
 train_norms = []
 
 s_time = time.time()
-for epoch in tqdm(range(1)):
+for epoch in tqdm(range(N_epochs)):
 
     model.train()
     loss_list = []
     for X,Y in train_dl:
         logits = model(X, Y)
-        # FIX: Implement discretization to address troubly data
-        if torch.isnan(logits).any():
-            # continue
-            break
 
         optimizer.zero_grad(True)
 
@@ -443,9 +440,6 @@ for epoch in tqdm(range(1)):
         loss_list = []
         for X,Y in test_dl:
             logits = model(X, Y)
-            # FIX: same as above
-            if torch.isnan(logits).any():
-                continue
 
             tgt_output = Y[:, 1:]
             logits_flat = logits.transpose(-2, -1)
@@ -457,7 +451,7 @@ for epoch in tqdm(range(1)):
     test_batch_loss = torch.mean(torch.tensor(loss_list))
 
     # Update learning rate
-    lr = 1e-1 * d_model**-0.5 * min((epoch+1)**-0.5, (epoch + 1) * 10**-1.5)
+    lr = d_model**-0.5 * min((epoch+1)**-0.5, (epoch + 1) * 10**-1.5)
     for p in optimizer.param_groups:
         p['lr'] = lr
 
