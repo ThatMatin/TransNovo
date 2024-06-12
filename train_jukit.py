@@ -15,7 +15,7 @@ import data_processor
 #|%%--%%| <hVaifVrkF7|BP1Q2E56wH>
 
 N_epochs = 100
-lr = 1e-4
+lr = 1e-5
 batch_size = 128
 d_model = 128
 n_heads = 8
@@ -314,14 +314,30 @@ def print_grad(name, grad):
 for name, param in model.named_parameters():
     param.register_hook(lambda grad, name=name: print_grad(name, grad))
 
-#|%%--%%| <pE2B6PAjh4|x9JPoCiRId>
+#|%%--%%| <pE2B6PAjh4|vxo2pgBRD0>
+
+ce = nn.CrossEntropyLoss()
+for X,Y in train_dl:
+    logits = model(X, Y)
+    if torch.isnan(logits).any():
+        continue
+
+    tgt_output = Y[:, 1:]
+    logits_flat = logits.transpose(-2, -1)
+
+    l = ce(logits_flat, tgt_output)
+    print(l)
+
+    break
+
+#|%%--%%| <vxo2pgBRD0|x9JPoCiRId>
 
 train_lossi = []
 test_lossi = []
 train_norms = []
 
 s_time = time.time()
-for epoch in tqdm(range(10)):
+for epoch in tqdm(range(5)):
 
     model.train()
     loss_list = []
@@ -334,15 +350,14 @@ for epoch in tqdm(range(10)):
         optimizer.zero_grad(True)
 
         tgt_output = Y[:, 1:]
-        logits_flat = logits.view(-1, vocab_size)
-        tgt_output_flat = tgt_output.reshape(-1)
+        logits_flat = logits.transpose(-2, -1)
 
-        loss = loss_fn(logits_flat, tgt_output_flat)
+        loss = loss_fn(logits_flat, tgt_output)
 
         loss.backward()
         optimizer.step()
 
-        loss_list.append(loss.mean())
+        loss_list.append(loss.item())
 
         # norms observation
         norms = []
@@ -368,16 +383,16 @@ for epoch in tqdm(range(10)):
             tgt_output_flat = tgt_output.reshape(-1)
             loss = loss_fn(logits_flat, tgt_output_flat)
 
-            loss_list.append(loss.mean())
+            loss_list.append(loss.item())
 
     test_batch_loss = torch.mean(torch.tensor(loss_list))
     test_lossi.append(test_batch_loss)
 
     # Update learning rate
-    lr = d_model**-0.5 * min((epoch+1)**-0.5, (epoch + 1) * 10**1-.5)
-    for p in optimizer.param_groups:
-        p['lr'] = lr
-
+    # lr = d_model**-0.5 * min((epoch+1)**-0.5, (epoch + 1) * 10**1-.5)
+    # for p in optimizer.param_groups:
+    #     p['lr'] = lr
+    #
     if epoch % 1 == 0:
         print(f"epoch: {epoch} | train loss: {train_batch_loss:.4f} | test loss: {test_batch_loss:.4f}")
 
@@ -387,6 +402,12 @@ print(f"training time: {time.time() - s_time: 0.1f}s")
 #|%%--%%| <x9JPoCiRId|RZUjcGa99k>
 
 import matplotlib.pyplot as plt
+plt.figure(figsize=(6, 6))
+plt.subplot(2, 2, 0)
+plt.plot(torch.tensor(train_lossi))
+plt.text()
+plt.subplot(2, 2, 1)
+plt.plot(torch.tensor(test_lossi))
 plt.plot(torch.log10(torch.tensor(train_norms)))
 
 #|%%--%%| <RZUjcGa99k|1O2swP2h1L>
