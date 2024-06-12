@@ -17,7 +17,7 @@ import data_processor
 N_epochs = 100
 lr = 1e-5
 batch_size = 128
-d_model = 128
+d_model = 512
 n_heads = 8
 d_key = d_model//n_heads
 d_val = d_model//n_heads
@@ -70,7 +70,42 @@ class MSPLoader(Dataset):
                 spectrum += offset*[(0, 0)]
             spectra.append(spectrum)
         self.X = torch.tensor(spectra).to(device)
+        self.X = self.discretize(self.X)
         self.Y = torch.tensor(names).to(device)
+
+    def discretize(self, X):
+        _, indices = torch.sort(X[:, :, 1], descending=True)
+        sorted_indices = indices.unsqueeze(-1).expand(-1, -1, 2)
+        X_sorted = X.gather(1, sorted_indices)
+
+        # Non zero elements per spectrum (batch element)
+        non_zeros_counts = X_sorted.count_nonzero(1)[:, 0]
+        # start indeces of the weakest 33%
+        w33_st_idxs = (2/3 * non_zeros_counts).int()
+
+        # pluck the weakest 33% and mean them, then create a tensor from means
+        means_list = []
+        for b in range(X.size(0)):
+            m = X_sorted[b, w33_st_idxs[b]:non_zeros_counts[b], 1].mean()
+            means_list.append(m)
+        w33_means = torch.stack(means_list)
+
+        w33_means_div = w33_means.unsqueeze(-1).unsqueeze(-1).expand_as(X).clone()
+        w33_means_div[:, :, 0] = 1
+
+        X_w33_normalized = X / w33_means_div
+
+        intensities = X_w33_normalized[:, :, 1]
+        discretized = torch.zeros_like(intensities)
+        discretized[intensities >= 10] = 3
+        discretized[(intensities >= 2) & (intensities < 10)] = 2
+        discretized[(intensities >= 0.05) & (intensities < 2)] = 1
+        discretized[intensities < 0.05] = 0
+
+        X_intens_disc = X_w33_normalized.clone()
+        X_intens_disc[:, :, 1] = discretized
+
+        return X_intens_disc
 
 
     def __len__(self):
@@ -272,7 +307,7 @@ class TransNovo(nn.Module):
 #|%%--%%| <yxh8vl6HXU|YvQnWIl8kc>
 
 # Preparing data
-msp = MSPLoader(20)
+msp = MSPLoader(400)
 print(f"Total number of data: {len(msp)}")
 # TODO: Check memory pinning
 dataloader = DataLoader(msp, batch_size, True)
@@ -370,7 +405,7 @@ test_lossi = []
 train_norms = []
 
 s_time = time.time()
-for epoch in tqdm(range(5)):
+for epoch in tqdm(range(1)):
 
     model.train()
     loss_list = []
@@ -378,7 +413,8 @@ for epoch in tqdm(range(5)):
         logits = model(X, Y)
         # FIX: Implement discretization to address troubly data
         if torch.isnan(logits).any():
-            continue
+            # continue
+            break
 
         optimizer.zero_grad(True)
 
@@ -391,6 +427,7 @@ for epoch in tqdm(range(5)):
         optimizer.step()
 
         train_lossi.append(loss.item())
+        loss_list.append(loss.item())
 
         # norms observation
         norms = []
@@ -400,7 +437,6 @@ for epoch in tqdm(range(5)):
         train_norms.append(sum(norms)/len(norms))
 
     train_batch_loss = torch.mean(torch.tensor(loss_list))
-    train_lossi.append(train_batch_loss)
 
     with torch.inference_mode():
         model.eval()
@@ -415,16 +451,16 @@ for epoch in tqdm(range(5)):
             logits_flat = logits.transpose(-2, -1)
             loss = loss_fn(logits_flat, tgt_output)
 
+            test_lossi.append(loss.item())
             loss_list.append(loss.item())
 
     test_batch_loss = torch.mean(torch.tensor(loss_list))
-    test_lossi.append(test_batch_loss)
 
     # Update learning rate
-    # lr = d_model**-0.5 * min((epoch+1)**-0.5, (epoch + 1) * 10**1-.5)
-    # for p in optimizer.param_groups:
-    #     p['lr'] = lr
-    #
+    lr = 1e-1 * d_model**-0.5 * min((epoch+1)**-0.5, (epoch + 1) * 10**-1.5)
+    for p in optimizer.param_groups:
+        p['lr'] = lr
+
     if epoch % 1 == 0:
         print(f"epoch: {epoch} | train loss: {train_batch_loss:.4f} | test loss: {test_batch_loss:.4f}")
 
@@ -450,11 +486,7 @@ plt.title("gradient norms")
 torch.save(model.state_dict(), model_save_path)
 print(f"Saved to {model_save_path}")
 
-#|%%--%%| <1O2swP2h1L|78sPz0FTOb>
-
-model.load_state_dict(torch.load(model_save_path))
-
-#|%%--%%| <78sPz0FTOb|E2JCCJvk1v>
+#|%%--%%| <1O2swP2h1L|E2JCCJvk1v>
 
 
 enc, dec = data_processor.get_AA_Dec_Enc(aa_csv)
@@ -462,8 +494,30 @@ X, Y = msp[200]
 print(model.generate(X))
 dec(Y.tolist())
 
-#|%%--%%| <E2JCCJvk1v|E8AEbcolc9>
+#|%%--%%| <E2JCCJvk1v|MncYGDHvTS>
+
+# Check if discretization produces nan
+for X, Y in train_dl:
+    if torch.isnan(msp.discretize(X)).any():
+        print("Imposter")
+
+for X, Y in test_dl:
+    if torch.isnan(msp.discretize(X).any()):
+        print("Test Imposter")
+
+#|%%--%%| <MncYGDHvTS|3va8sjeCus>
+
+with torch.inference_mode():
+    for X, Y in train_dl:
+        if torch.isnan(model(msp.discretize(X), Y)).any():
+            print(X)
+
+#|%%--%%| <3va8sjeCus|E8AEbcolc9>
 
 import matplotlib.pyplot as plt
 plt.plot(torch.tensor(train_lossi).view(-1, 1000).mean(1) )
+
+#|%%--%%| <E8AEbcolc9|78sPz0FTOb>
+
+model.load_state_dict(torch.load(model_save_path))
 
