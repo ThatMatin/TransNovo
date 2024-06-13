@@ -78,6 +78,14 @@ class FeedForward(nn.Module):
                 nn.Linear(d_ff, d_model),
                 nn.Dropout(dropout),
                 )
+        self._init_weights()
+
+    def _init_weights(self):
+        for layer in self.net:
+            if isinstance(layer, nn.Linear):
+                nn.init.kaiming_normal_(layer.weight, nonlinearity='relu')
+                if layer.bias is not None:
+                    nn.init.zeros_(layer.bias)
 
     def forward(self, x):
         out = self.net(x)
@@ -111,7 +119,7 @@ class Decoder(nn.Module):
         super().__init__()
         self.masked_at = AttentionBlock(d_model, d_key, d_val, n_heads, dropout, True)
         self.enc_dec_at = AttentionBlock(d_model, d_key, d_val, n_heads, dropout, False)
-        self.ff = FeedForward(d_model, d_ff, dropout)
+        self.ff = FeedForwardBlock(d_model, d_ff, dropout)
 
     def forward(self, dec_in, enc_out):
         at_out = self.masked_at(dec_in)

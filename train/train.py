@@ -32,12 +32,11 @@ def train_step(model: nn.Module,
         loss.backward()
         optimizer.step()
 
-        result_matrix[i, 0] = loss
+        result_matrix[i, 0] = loss.detach()
         result_matrix[i, 1] = model.grad_norms_mean()
 
         if interruptHandler.is_interrupted():
             break
-
 
     return result_matrix
 
@@ -78,8 +77,16 @@ def init_adam(model: TransNovo):
     betas = p.optimizer_adam_betas
     eps = p.optimizer_adam_eps
     step = 1 if p.n_epochs_sofar == 0 else p.n_epochs_sofar
-    lr = p.learning_rate(step, d_model, warmup)
-    return Adam(model.parameters(), lr, betas, eps)
+
+    if callable(p.learning_rate):
+        lr = p.learning_rate(step, d_model, warmup)
+    else:
+        lr = p.learning_rate
+
+    a = Adam(model.parameters(), lr, betas, eps)
+    if not model.hyper_params.optimizer_state_dict:
+        a.load_state_dict(model.hyper_params.optimizer_state_dict)
+    return a
 
 
 def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interruptHandler: InterruptHandler):
@@ -103,15 +110,18 @@ def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interrup
         test_result_matrix[rm_idx] = train.test_step(model, loss_fn, test_dl, interruptHandler)
 
         # Update learning rate
-        lr = p.learning_rate(epoch + 1, p.d_model, p.warmup_steps)
-        train.update_lr(optimizer, lr)
+        if callable(p.learning_rate):
+            lr = p.learning_rate(epoch + 1, p.d_model, p.warmup_steps)
+            train.update_lr(optimizer, lr)
+        else:
+            lr = p.learning_rate
 
         # calculate batch loss
-        train_batch_loss_tensor = train_result_matrix[rm_idx, :, 0]
-        tr_l = train_batch_loss_tensor[train_batch_loss_tensor != 0].mean().item()
+        train_epoch_loss_tensor = train_result_matrix[rm_idx, :, 0]
+        tr_l = train_epoch_loss_tensor[train_epoch_loss_tensor != 0].mean().item()
         t_b_grads_tensor = train_result_matrix[rm_idx, :, 1].mean()
-        test_batch_loss_tensor = test_result_matrix[rm_idx, :, 0]
-        te_l = test_batch_loss_tensor[test_batch_loss_tensor != 0].mean().item()
+        test_epoch_loss_tensor = test_result_matrix[rm_idx, :, 0]
+        te_l = test_epoch_loss_tensor[test_epoch_loss_tensor != 0].mean().item()
 
         if epoch % view_rate == 0:
             print(f"epoch: {epoch} | lr: {lr} | train loss: "
