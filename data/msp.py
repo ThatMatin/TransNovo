@@ -28,6 +28,7 @@ class MSP(Dataset):
             _spectra += _parse_msp_gz(p)
 
         self.set_max_lenghts(params, _spectra)
+        params.data_point_count = len(_spectra)
 
         names, spectra = [], []
         for name, spectrum in _spectra:

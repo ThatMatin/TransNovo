@@ -13,7 +13,8 @@ from modules import TransNovo
 def train_step(model: nn.Module,
                optimizer: torch.optim.Optimizer,
                loss_fn: nn.Module,
-               train_dl: data.DataLoader):
+               train_dl: data.DataLoader,
+               interruptHandler: InterruptHandler):
 
     result_matrix = torch.zeros((len(train_dl), 2))
 
@@ -34,12 +35,17 @@ def train_step(model: nn.Module,
         result_matrix[i, 0] = loss
         result_matrix[i, 1] = model.grad_norms_mean()
 
+        if interruptHandler.is_interrupted():
+            break
+
+
     return result_matrix
 
 
 def test_step(model: nn.Module,
               loss_fn: nn.Module,
-              test_dl: data.DataLoader):
+              test_dl: data.DataLoader,
+              interruptHandler: InterruptHandler):
 
     with torch.inference_mode():
         result_matrix = torch.zeros((len(test_dl), 2))
@@ -54,6 +60,9 @@ def test_step(model: nn.Module,
 
             result_matrix[i, 0] = loss
             result_matrix[i, 1] = model.grad_norms_mean()
+
+            if interruptHandler.is_interrupted():
+                break
 
     return result_matrix
 
@@ -74,7 +83,7 @@ def init_adam(model: TransNovo):
 
 
 def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interruptHandler: InterruptHandler):
-    epoch = 0
+    rm_idx = 0
     p = model.hyper_params
 
     start_epoch = p.n_epochs_sofar
@@ -90,20 +99,27 @@ def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interrup
     for epoch in tqdm(range(start_epoch, end_epochs)):
         rm_idx = epoch - start_epoch
 
-        train_result_matrix[rm_idx] = train.train_step(model, optimizer, loss_fn, train_dl)
-        test_result_matrix[rm_idx] = train.test_step(model, loss_fn, test_dl)
+        train_result_matrix[rm_idx] = train.train_step(model, optimizer, loss_fn, train_dl, interruptHandler)
+        test_result_matrix[rm_idx] = train.test_step(model, loss_fn, test_dl, interruptHandler)
 
         # Update learning rate
         lr = p.learning_rate(epoch + 1, p.d_model, p.warmup_steps)
         train.update_lr(optimizer, lr)
 
+        # calculate batch loss
+        train_batch_loss_tensor = train_result_matrix[rm_idx, :, 0]
+        tr_l = train_batch_loss_tensor[train_batch_loss_tensor != 0].mean().item()
+        t_b_grads_tensor = train_result_matrix[rm_idx, :, 1].mean()
+        test_batch_loss_tensor = test_result_matrix[rm_idx, :, 0]
+        te_l = test_batch_loss_tensor[test_batch_loss_tensor != 0].mean().item()
+
         if epoch % view_rate == 0:
             print(f"epoch: {epoch} | lr: {lr} | train loss: "
-                  f"{train_result_matrix[rm_idx, :, 0].mean().item():.4f} "
-                  f"| test loss: {train_result_matrix[rm_idx, :, 0].mean().item():.4f}")
+                  f"{tr_l:.4f} "
+                  f"| test loss: {te_l:.4f} | train grads norm: {t_b_grads_tensor}")
 
         if interruptHandler.is_interrupted():
             break
 
     print(f"training time: {time.time() - s_time: 0.1f}s")
-    model.finish_training(p.n_epochs, train_result_matrix,test_result_matrix,optimizer)
+    model.finish_training(rm_idx, train_result_matrix,test_result_matrix,optimizer)

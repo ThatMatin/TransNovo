@@ -129,7 +129,7 @@ class TransNovo(nn.Module):
         self.ll = nn.Linear(params.d_model, get_vocab_size())
         self.N_named_parameters = None
         self.hyper_params = params
-
+        self.introduce()
 
     def forward(self, x, targets: torch.Tensor):
         tgt_input = targets[:, :-1]
@@ -169,10 +169,19 @@ class TransNovo(nn.Module):
         self.hyper_params.train_result_matrix = torch.cat((self.hyper_params.train_result_matrix, trrm))
         self.hyper_params.test_result_matrix = torch.cat((self.hyper_params.test_result_matrix, tsrm))
 
-        self.introduce()
-
         return self.save_with_metadata()
 
+
+    def introduce(self):
+        p = self.hyper_params
+        t = f"Transormer:\n\td_model: {p.d_model}\n\tn_heads: {p.n_heads}"
+        t += f"\n\td_key=d_val=d_query: {p.d_key}\n\td_ff: {p.d_ff}\n\tdropout: {p.dropout_rate}"
+        t += f"\n\tLen X: {p.max_spectrum_lenght}\n\tLen Y: {p.max_peptide_lenght}"
+        t += f"\nModel parameters: {self.total_param_count()}"
+        t += f"\nNum data points: {p.data_point_count}\noptim: Adam"
+        t += f"\nBatch size: {p.batch_size}"
+        t += f"\nEpochs so far: {p.n_epochs_sofar}\nEpochs this round: {p.n_epochs}"
+        print(t)
 
     # TODO: create and update Metrics Matrix
     def save_with_metadata(self):
@@ -181,17 +190,18 @@ class TransNovo(nn.Module):
                 MODEL_STATE_DICT : self.state_dict(),
                 }
 
-        return torch.save(checkpoint, self.hyper_params.model_save_path)
+        return torch.save(checkpoint, self.hyper_params.model_save_path())
 
 
     def load_if_file_exists(self):
-        if os.path.exists(self.hyper_params.model_save_path):
-            self.load_model(self.hyper_params.model_save_path)
+        if os.path.exists(self.hyper_params.model_save_path()):
+            self.load_model(self.hyper_params.model_save_path())
+            self.introduce()
 
 
     def load_model(self, model_path=None):
         if model_path is None:
-            model_path = self.hyper_params.model_save_path
+            model_path = self.hyper_params.model_save_path()
         checkpoint = torch.load(model_path)
         self.hyper_params(checkpoint.get(MODEL_HYPERPARAMETERS, {}))
         return self.load_state_dict(checkpoint[MODEL_STATE_DICT])

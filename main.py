@@ -8,7 +8,7 @@ from modules import TransNovo
 
 
 def main():
-    p = Parameters(max_file_size=500)
+    p = Parameters(d_model=512, d_ff=2024, batch_size=64, max_file_size=20)
     data = D.MSP(p)
     model = TransNovo(p)
     model.load_if_file_exists()

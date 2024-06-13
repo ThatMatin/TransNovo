@@ -17,7 +17,7 @@ class Parameters:
                  warmup_steps: int = 10,
                  batch_size: int = 32,
                  d_ff: int = 512,
-                 dropout_rate: float = 0.2,
+                 dropout_rate: float = 0.1,
                  max_file_size: float = 10,
                  lr=None,
                  device=None):
@@ -36,8 +36,9 @@ class Parameters:
         self.dropout_rate = dropout_rate
 
         # train data
-        self.max_spectrum_lenght = 200
-        self.max_peptide_lenght = 100
+        self.max_spectrum_lenght = 0
+        self.max_peptide_lenght = 0
+        self.data_point_count = 0
 
         # optimizer
         self.warmup_steps = warmup_steps
@@ -52,7 +53,6 @@ class Parameters:
         # Saving and loading
         self.data_path = data_path
         self.max_file_size = max_file_size
-        self.model_save_path = f"tn_d{d_model}_h{n_heads}_ff{d_ff}_dr{10*dropout_rate}_X{self.max_spectrum_lenght}_Y{self.max_peptide_lenght}.pth"
 
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -62,6 +62,11 @@ class Parameters:
         if lr is None:
             lr = lr_func
         self.learning_rate = lr
+
+    def model_save_path(self):
+        f = f"tn_d{self.d_model}_h{self.n_heads}_ff{self.d_ff}_dr{10*self.dropout_rate}"
+        f += f"_X{self.max_spectrum_lenght}_Y{self.max_peptide_lenght}.pth"
+        return f
 
 
     def set_data_lenght_params(self, max_spectrum_lenght, max_peptide_lenght):
