@@ -32,10 +32,22 @@ class PeptideEmbedding(nn.Module):
 class SpectrumEmbedding(nn.Module):
     def __init__(self, d_model):
         super().__init__()
-        self.embedding = nn.Linear(2, d_model)
+        self.embedding = nn.Sequential(
+                nn.Linear(2, 1024),
+                nn.ReLU(),
+                nn.Linear(1024, d_model),
+                nn.Dropout(0.1),
+                )
         self.ln = nn.LayerNorm(d_model)
+        self._init_weights()
+
+    def _init_weights(self):
+        for layer in self.embedding:
+            if isinstance(layer, nn.Linear):
+                nn.init.kaiming_normal_(layer.weight, nonlinearity='relu')
+                if layer.bias is not None:
+                    nn.init.zeros_(layer.bias)
 
     def forward(self, x):
-        out = self.embedding(x) * torch.sqrt(torch.tensor(
-                self.embedding.weight.size(1), dtype=torch.float32))
+        out = self.embedding(x)
         return self.ln(out)

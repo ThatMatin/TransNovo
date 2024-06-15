@@ -1,8 +1,8 @@
 from typing import Optional
 import torch
 
-def lr_func(step, d_model, warmup_steps):
-    return d_model**-0.5 * min(step**-0.5, warmup_steps**1-.5)
+def lr_func(step, d_model, warmup_steps) -> float:
+    return d_model**-0.5 * min(step**-0.5, warmup_steps**-1.5)
 
 class Parameters:
     """
@@ -19,7 +19,7 @@ class Parameters:
                  d_ff: int = 512,
                  dropout_rate: float = 0.1,
                  max_file_size: float = 10,
-                 lr=None,
+                 lr: float = 1e-5,
                  device=None):
 
         self.n_epochs = n_epochs
@@ -36,8 +36,8 @@ class Parameters:
         self.dropout_rate = dropout_rate
 
         # train data
-        self.max_spectrum_lenght = 0
-        self.max_peptide_lenght = 0
+        self.max_spectrum_length = 200
+        self.max_peptide_lenght = 100
         self.data_point_count = 0
 
         # optimizer
@@ -59,19 +59,17 @@ class Parameters:
         self.device = device
 
         # NOTE: Beacuse of pickle's issues with local functions we can't create closures with set d_model and warmup_steps. So we have to pass them to learning_rate func every time
-        if lr is None:
-            lr = lr_func
         self.learning_rate = lr
 
     def model_save_path(self):
         f = f"tn_d{self.d_model}_h{self.n_heads}_ff{self.d_ff}_dr{10*self.dropout_rate}"
-        f += f"_X{self.max_spectrum_lenght}_Y{self.max_peptide_lenght}.pth"
+        f += f"_X{self.max_spectrum_length}_Y{self.max_peptide_lenght}.pth"
         return f
 
 
     def set_data_lenght_params(self, max_spectrum_lenght, max_peptide_lenght):
         self.max_peptide_lenght = max_peptide_lenght
-        self.max_spectrum_lenght = max_spectrum_lenght
+        self.max_spectrum_length = max_spectrum_lenght
 
 
     def __call__(self, state_dict: Optional[dict] = None):

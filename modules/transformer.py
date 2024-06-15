@@ -4,10 +4,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
 
-from modules import PeptideEmbedding, SpectrumEmbedding
-from modules.parameters import Parameters
+from .embedding import PeptideEmbedding, SpectrumEmbedding
+from .parameters import Parameters
 from tokenizer import decode, get_vocab_size
-from tokenizer.aa import END_TOKEN
+from tokenizer.aa import END_TOKEN, PAD_TOKEN
 
 MODEL_STATE_DICT = "model_state_dict"
 MODEL_HYPERPARAMETERS = "hyper_params"
@@ -19,11 +19,13 @@ class AttentionHead(nn.Module):
         self.query = nn.Linear(d_model, d_key, bias=False)
         self.value = nn.Linear(d_model, d_val, bias=False)
         self.dropout = nn.Dropout(dropout)
+        # TODO: find a good place for it
         # keep the dimensions large enough to cover max seq lenghth (200 here)
         self.register_buffer("tril", torch.tril(torch.ones(200, 200)))
         self.is_masked = is_masked
 
-    def forward(self, q: torch.Tensor, kv: Optional[torch.Tensor] = None):
+    def forward(self, q: torch.Tensor, kv: Optional[torch.Tensor] = None,
+                pad_mask: Optional[torch.Tensor] = None):
         if kv is None:
             kv = q
         _, T, C = q.shape
@@ -31,9 +33,12 @@ class AttentionHead(nn.Module):
         V = self.value(kv)
         Q = self.query(q)
         W = (Q @ K.transpose(-2, -1))/ C**0.5
-        # TODO: filter zero tokens
         if self.is_masked:
             W = W.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+
+        if pad_mask is not None:
+            W = W.masked_fill(pad_mask == 1, float('-inf'))
+
         W = torch.softmax(W, dim=-1)
         W = self.dropout(W)
         out = W @ V
@@ -50,8 +55,8 @@ class MultiHeadAttention(nn.Module):
         self.proj = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, q, kv):
-        out = torch.concat([h(q, kv) for h in self.heads], dim=-1)
+    def forward(self, q, kv, pad_mask=None):
+        out = torch.concat([h(q, kv=kv, pad_mask=pad_mask) for h in self.heads], dim=-1)
         out = self.dropout(self.proj(out))
         return out
 
@@ -62,10 +67,10 @@ class AttentionBlock(nn.Module):
         self.MHA = MultiHeadAttention(d_model, d_key, d_val, n_heads, dropout, is_masked)
         self.ln2 = nn.LayerNorm(d_model)
 
-    def forward(self, q, kv=None):
+    def forward(self, q, kv=None, pad_mask=None):
         if kv == None:
             kv = q
-        res = q + self.MHA(q, kv)
+        res = q + self.MHA(q, kv=kv, pad_mask=pad_mask)
         return self.ln2(res)
 
 
@@ -110,8 +115,8 @@ class Encoder(nn.Module):
         self.at = AttentionBlock(d_model, d_key, d_val, n_heads, dropout, False)
         self.ff = FeedForwardBlock(d_model, d_ff, dropout)
 
-    def forward(self, x):
-        return self.ff(self.at(x))
+    def forward(self, X, pad_mask=None):
+        return self.ff(self.at(X, pad_mask=pad_mask))
 
 
 class Decoder(nn.Module):
@@ -121,9 +126,9 @@ class Decoder(nn.Module):
         self.enc_dec_at = AttentionBlock(d_model, d_key, d_val, n_heads, dropout, False)
         self.ff = FeedForwardBlock(d_model, d_ff, dropout)
 
-    def forward(self, dec_in, enc_out):
-        at_out = self.masked_at(dec_in)
-        out = self.enc_dec_at(at_out, enc_out)
+    def forward(self, dec_in, enc_out, pad_mask=None):
+        at_out = self.masked_at(dec_in, pad_mask=pad_mask)
+        out = self.enc_dec_at(at_out, kv=enc_out)
         return self.ff(out)
         
 
@@ -139,33 +144,44 @@ class TransNovo(nn.Module):
         self.hyper_params = params
         self.introduce()
 
-    def forward(self, x, targets: torch.Tensor):
-        tgt_input = targets[:, :-1]
-        encoded_x = self.enc(self.spectrum_emb(x))
-        out = self.dec(self.peptide_emb(tgt_input), encoded_x)
-        return self.ll(out)
+    def forward(self, X, Y: torch.Tensor):
+        Y_input = Y[:, :-1]
+        X_mask, Y_mask = self.get_padding_masks(X, Y_input)
+        X_enc = self.enc(self.spectrum_emb(X), X_mask)
+        model_out = self.dec(self.peptide_emb(Y_input), X_enc, pad_mask=Y_mask)
+        return self.ll(model_out)
+
+
+    def get_padding_masks(self, X, Y):
+        with torch.no_grad():
+            is_padding = (X == torch.tensor([PAD_TOKEN, 0], device=self.hyper_params.device)).all(dim=2)
+            to_bool = is_padding.int()
+            X_mask = to_bool.unsqueeze(-1).expand(-1, -1, X.size(1))
+            Y_mask = (Y == PAD_TOKEN).unsqueeze(-1).expand(-1, -1, Y.size(1)).int()
+
+        return X_mask.transpose(-2, -1), Y_mask.transpose(-2, -1)
 
 
     @torch.no_grad()
-    def generate(self, x, device='cpu'):
+    def generate(self, x):
         self.eval()
 
         if len(x.shape) == 2:
             x = x.unsqueeze(0)
 
-        out = []
-        dec_in = torch.ones((1 ,1),device=device, dtype=torch.int64)
-        for _ in range(100):
-            encoded_x = self.enc(self.spectrum_emb(x))
-            dec_out = self.dec(self.peptide_emb(dec_in), encoded_x)
-            probs = F.softmax(self.ll(dec_out), dim=-1)
-            next_aa = torch.multinomial(probs.squeeze(), num_samples=1, replacement=True).item()
+        idx = torch.ones((1 , 1),device=self.hyper_params.device, dtype=torch.int64)
+        while True:
+            x_m, _ = self.get_padding_masks(x, idx)
+            encoded_x = self.enc(self.spectrum_emb(x), x_m)
+            dec_out = self.dec(self.peptide_emb(idx), encoded_x)
+            probs = F.softmax(self.ll(dec_out), dim=-1)[:, -1, :]
+            next_aa = torch.multinomial(probs.squeeze(), num_samples=1, replacement=True).unsqueeze(0)
             
-            out.append(next_aa)
-            if next_aa == END_TOKEN:
+            idx = torch.cat((idx, next_aa), dim=1)
+            if next_aa.item() == END_TOKEN:
                 break
 
-        return decode(out)   
+        return idx.squeeze()
 
 
     def finish_training(self, epoch: int, train_result_matrix: torch.Tensor,
@@ -182,9 +198,10 @@ class TransNovo(nn.Module):
 
     def introduce(self):
         p = self.hyper_params
-        t = f"Transormer:\n\td_model: {p.d_model}\n\tn_heads: {p.n_heads}"
+        t = "\n>>>>>>>>>>>>>>>>> TransNovo <<<<<<<<<<<<<<<<<<<"
+        t += f"\n\td_model: {p.d_model}\n\tn_heads: {p.n_heads}\n\tlr: {p.learning_rate}"
         t += f"\n\td_key=d_val=d_query: {p.d_key}\n\td_ff: {p.d_ff}\n\tdropout: {p.dropout_rate}"
-        t += f"\n\tLen X: {p.max_spectrum_lenght}\n\tLen Y: {p.max_peptide_lenght}"
+        t += f"\n\tLen X: {p.max_spectrum_length}\n\tLen Y: {p.max_peptide_lenght}"
         t += f"\nModel parameters: {self.total_param_count()}"
         t += f"\nNum data points: {p.data_point_count}\noptim: Adam"
         t += f"\nBatch size: {p.batch_size}"
@@ -204,7 +221,6 @@ class TransNovo(nn.Module):
     def load_if_file_exists(self):
         if os.path.exists(self.hyper_params.model_save_path()):
             self.load_model(self.hyper_params.model_save_path())
-            self.introduce()
 
 
     def load_model(self, model_path=None):
@@ -212,8 +228,13 @@ class TransNovo(nn.Module):
             model_path = self.hyper_params.model_save_path()
         checkpoint = torch.load(model_path)
         self.hyper_params(checkpoint.get(MODEL_HYPERPARAMETERS, {}))
-        return self.load_state_dict(checkpoint[MODEL_STATE_DICT])
+        self.load_state_dict(checkpoint[MODEL_STATE_DICT])
+        self.introduce()
 
+
+    def view_grad_norms(self):
+        for n, p in self.named_parameters():
+            print(f"{n}: {p.grad.norm()}")
 
     def grad_norms_mean(self) -> torch.Tensor:
         if self.N_named_parameters is None:

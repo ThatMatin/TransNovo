@@ -47,7 +47,7 @@ class MSP(Dataset):
         self.MAX_X += 2
         
         if params.max_peptide_lenght < self.MAX_Y or \
-                params.max_spectrum_lenght < self.MAX_X:
+                params.max_spectrum_length < self.MAX_X:
             params.set_data_lenght_params(self.MAX_X, self.MAX_Y)
 
 
