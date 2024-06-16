@@ -3,10 +3,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
+from rotary_embedding_torch import RotaryEmbedding
 
 from .embedding import PeptideEmbedding, SpectrumEmbedding
 from .parameters import Parameters
-from tokenizer import decode, get_vocab_size
+from tokenizer import get_vocab_size
 from tokenizer.aa import END_TOKEN, PAD_TOKEN
 
 MODEL_STATE_DICT = "model_state_dict"
@@ -23,6 +24,7 @@ class AttentionHead(nn.Module):
         # keep the dimensions large enough to cover max seq lenghth (200 here)
         self.register_buffer("tril", torch.tril(torch.ones(200, 200)))
         self.is_masked = is_masked
+        self.rotary = RotaryEmbedding(d_key)
 
     def forward(self, q: torch.Tensor, kv: Optional[torch.Tensor] = None,
                 pad_mask: Optional[torch.Tensor] = None):
@@ -32,6 +34,10 @@ class AttentionHead(nn.Module):
         K = self.key(kv)
         V = self.value(kv)
         Q = self.query(q)
+
+        Q = self.rotary.rotate_queries_or_keys(Q)
+        K = self.rotary.rotate_queries_or_keys(K)
+
         W = (Q @ K.transpose(-2, -1))/ C**0.5
         if self.is_masked:
             W = W.masked_fill(self.tril[:T, :T] == 0, float('-inf'))

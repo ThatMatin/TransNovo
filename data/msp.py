@@ -1,3 +1,4 @@
+from numpy import who
 import torch
 from torch.utils.data import Dataset
 from pathlib import Path
@@ -27,7 +28,10 @@ class MSP(Dataset):
             print(f"*> reading file: {p} | size: {os.path.getsize(p)*1e-6:.2f}")
             _spectra += _parse_msp_gz(p)
 
-        self.set_max_lenghts(params, _spectra)
+        # FIX: important
+        self.MAX_X = params.max_spectrum_length
+        self.MAX_Y = params.max_peptide_lenght
+        # self.set_max_lenghts(params, _spectra)
         params.data_point_count = len(_spectra)
 
         names, spectra = [], []
