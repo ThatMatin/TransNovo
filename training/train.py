@@ -1,7 +1,9 @@
+from typing import Optional
 import torch
 import torch.nn as nn
 import time
 from torch.optim import Adam
+from torch.optim.lr_scheduler import LRScheduler
 from tqdm.auto import tqdm
 from torch.utils import data
 from tqdm.auto import tqdm
@@ -85,12 +87,13 @@ def init_adam(model: TransNovo):
     lr = p.learning_rate
 
     a = Adam(model.parameters(), lr, betas, eps)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(a, T_max=50, eta_min=0.0001)
     if len(model.hyper_params.optimizer_state_dict) != 0:
         a.load_state_dict(model.hyper_params.optimizer_state_dict)
-    return a
+    return a, scheduler
 
 
-def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interruptHandler: InterruptHandler):
+def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interruptHandler: InterruptHandler, scheduler: Optional[LRScheduler] = None):
     rm_idx = 0
     lr = 0
     p = model.hyper_params
@@ -114,7 +117,10 @@ def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interrup
         test_result_matrix[rm_idx] = training.test_step(model, loss_fn, test_dl, interruptHandler)
 
         # Update learning rate
-        lr = p.learning_rate
+        lr = optimizer.param_groups[0]['lr']
+        p.learning_rate = lr
+        if scheduler:
+            scheduler.step()
 
         # calculate batch loss
         train_epoch_loss_tensor = train_result_matrix[rm_idx, :, 0]
@@ -132,8 +138,8 @@ def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interrup
         te_a = test_epoch_acc_tensor[test_epoch_acc_tensor != 0].mean().item()
 
         if epoch % view_rate == 0:
-            t = "\n\tEpoch |  lr  | train loss | train acc | train norms mean | test loss | test acc"
-            t += f"\n\t{epoch:>6}|{lr:>6.6}|{tr_l:>12.6f}|{tr_a:>11.6f}|{tr_epoch_grads:>18.6f}|{te_l:>11.6f}|{te_a:>10.6f}\n"
+            t = "\n\tEpoch |   lr   | train loss | train acc | train norms mean | test loss | test acc"
+            t += f"\n\t{epoch:>6}|{lr:>6.6f}|{tr_l:>12.6f}|{tr_a:>11.6f}|{tr_epoch_grads:>18.6f}|{te_l:>11.6f}|{te_a:>10.6f}\n"
             print(t)
 
         # TODO: Save after evey N iterations
