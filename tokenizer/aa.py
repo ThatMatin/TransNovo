@@ -7,6 +7,7 @@ END_TOKEN = 2
 Amino_Acids_File = "tokenizer/amino_acids.csv"
 AAtoI = None
 ItoAA = None
+AAtoMass = None
 
 def aa_tables() -> Tuple[Dict[str, int], Dict[int, str]]:
     """returns a tuple of (AminoAcidToInt[Dict], IntToAminoAcid[Dict])"""
@@ -18,9 +19,23 @@ def aa_tables() -> Tuple[Dict[str, int], Dict[int, str]]:
         AAtoI["<P>"] = 0
         AAtoI["<S>"] = 1
         AAtoI["<E>"] = 2
+        AAtoI = {k:v for k,v in sorted(AAtoI.items(), key= lambda item: item[1])}
         ItoAA = {i:a for a,i in AAtoI.items()}
     return AAtoI, ItoAA
-   
+
+
+def mass_table() -> Dict[str, float]:
+    global AAtoMass
+    if AAtoMass is None:
+        AA_table = _read_amino_acids_table(Amino_Acids_File)
+        AAtoMass = {v[0]:float(v[1]) for v in [list(k.values()) for k in AA_table.values()]}
+    return AAtoMass
+
+
+def mass(aa: str) -> float:
+    AAtoMass = mass_table()
+    return sum([AAtoMass[a] for a in aa])
+
 
 def encode(AA: str):
     AAtoI, _ = aa_tables()
@@ -49,6 +64,5 @@ def _read_amino_acids_table(file_path) -> Dict:
         csv_reader = csv.DictReader(csv_file, delimiter='\t')
         for row in csv_reader:
             key = row[csv_reader.fieldnames[0]]
-            del row[csv_reader.fieldnames[0]]
             data_dict[key] = row
     return data_dict

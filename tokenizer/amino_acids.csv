@@ -20,6 +20,6 @@ U	150.9536333957	150.0379	selenocysteine, SeC, C3H5NOSe
 V	99.06841392	99.13106	valine, Val, C5H9NO
 W	186.079313	186.2099	tryptophan, Trp, C11H10N2O
 Y	163.0633286	163.17326	tyrosine, Try, C9H9NO2
-B	0	0	asparagine/aspartic, Asn/Asp,-
-Z	0	0	glutamine/glutamic, Gln/Glu,-
-X	0	0	Unknown
+B	132.5455	132.6108	asparagine/aspartic, Asn/Asp,-
+Z	146.5612	146.6372	glutamine/glutamic, Gln/Glu,-
+X	128.09	128.17	Unknown
