@@ -8,7 +8,7 @@ from modules import TransNovo
 
 
 def main():
-    p = Parameters(d_model=512, d_ff=2024, batch_size=128, max_file_size=400, lr=1e-5)
+    p = Parameters(d_model=256, d_ff=1024, batch_size=32, max_file_size=300, lr=1e-5)
     data = D.MSP(p)
     model = TransNovo(p)
     model.load_if_file_exists()
@@ -16,7 +16,7 @@ def main():
 
     p = model.hyper_params
     model.to(p.device)
-    optimizer = training.init_adam(model)
+    optimizer, scheduler = training.init_adam(model)
     interrup_handler = InterruptHandler()
     loss_fn = CrossEntropyLoss()
     train_dl, test_dl = get_train_test_dataloaders(data,
@@ -24,9 +24,9 @@ def main():
                                                    p.train_test_split,
                                                    True)
 
-    training.train_loop(model, 
+    training.train_loop(model,
                      optimizer,loss_fn,train_dl,
-                     test_dl,interrup_handler)
+                     test_dl,interrup_handler, scheduler)
 
 
 if __name__ == "__main__":

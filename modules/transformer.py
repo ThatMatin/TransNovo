@@ -144,7 +144,7 @@ class Decoder(nn.Module):
 class TransNovo(nn.Module):
     def __init__(self, params: Parameters):
         super().__init__()
-        self.peptide_emb = PeptideEmbedding(RANGE_OF_WEIGHTS, IONS_COUNT, params.d_model,h_layer_dim=100, device=params.device)
+        self.peptide_emb = PeptideEmbedding(RANGE_OF_WEIGHTS, IONS_COUNT, params.d_model,h_layer_dim=50, device=params.device)
         self.spectrum_emb = SpectrumEmbedding(params.d_model)
         self.enc = Encoder(params.d_model, params.d_ff, params.d_key, params.d_val, params.n_heads, params.dropout_rate)
         self.dec = Decoder(params.d_model, params.d_ff, params.d_key, params.d_val, params.n_heads, params.dropout_rate)

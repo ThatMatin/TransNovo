@@ -36,8 +36,8 @@ class Parameters:
         self.dropout_rate = dropout_rate
 
         # train data
-        self.max_spectrum_length = 180
-        self.max_peptide_lenght = 80
+        self.max_spectrum_length = 250
+        self.max_peptide_lenght = 100
         self.data_point_count = 0
 
         # optimizer
