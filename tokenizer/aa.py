@@ -1,13 +1,21 @@
 import csv
+import torch
+import tokenizer.molecules as M
 from typing import Dict, List, Tuple
 
+
 PAD_TOKEN = 0
+PAD_TOKEN_STR = "-"
 START_TOKEN = 1
+START_TOKEN_STR = "="
 END_TOKEN = 2
+END_TOKEN_STR = "!"
 Amino_Acids_File = "tokenizer/amino_acids.csv"
 AAtoI = None
 ItoAA = None
 AAtoMass = None
+ItoMass = None
+Mass_Lookup_Tensor = torch.Tensor([])
 
 def aa_tables() -> Tuple[Dict[str, int], Dict[int, str]]:
     """returns a tuple of (AminoAcidToInt[Dict], IntToAminoAcid[Dict])"""
@@ -16,25 +24,59 @@ def aa_tables() -> Tuple[Dict[str, int], Dict[int, str]]:
     if AAtoI is None or ItoAA is None:
         AA_table = _read_amino_acids_table(Amino_Acids_File)
         AAtoI = { a:i+3 for i,a in enumerate(AA_table) }
-        AAtoI["<P>"] = 0
-        AAtoI["<S>"] = 1
-        AAtoI["<E>"] = 2
+        AAtoI[PAD_TOKEN_STR] = 0
+        AAtoI[START_TOKEN_STR] = 1
+        AAtoI[END_TOKEN_STR] = 2
         AAtoI = {k:v for k,v in sorted(AAtoI.items(), key= lambda item: item[1])}
         ItoAA = {i:a for a,i in AAtoI.items()}
     return AAtoI, ItoAA
 
 
-def mass_table() -> Dict[str, float]:
+def mass_tables() -> Tuple[Dict[str, float], Dict[int, float]]:
     global AAtoMass
-    if AAtoMass is None:
+    global ItoMass
+    global ItoAA
+
+    if ItoAA is None:
+        _, ItoAA = aa_tables()
+
+    if AAtoMass is None or ItoMass is None:
         AA_table = _read_amino_acids_table(Amino_Acids_File)
         AAtoMass = {v[0]:float(v[1]) for v in [list(k.values()) for k in AA_table.values()]}
-    return AAtoMass
+        AAtoMass[START_TOKEN_STR] = M.PROTON
+        AAtoMass[END_TOKEN_STR] = M.OH
+        AAtoMass[PAD_TOKEN_STR] = 0
+        ItoMass = {i:AAtoMass[m] for i,m in ItoAA.items()}
+    return AAtoMass, ItoMass
 
 
 def mass(aa: str) -> float:
-    AAtoMass = mass_table()
+    AAtoMass, _ = mass_tables()
     return sum([AAtoMass[a] for a in aa])
+
+
+def mass_tensor(Y: torch.Tensor, device: torch.device = torch.device("cuda")) -> torch.Tensor:
+    """
+    returns the mass of amino acids in an integer tensor whose entries
+    are index of amino acids in the table
+    """
+    global Mass_Lookup_Tensor
+    global ItoMass
+    if ItoMass is None:
+        _, ItoMass = mass_tables()
+
+    if len(Mass_Lookup_Tensor) == 0:
+        max_key = max(ItoMass.keys()) 
+        Mass_Lookup_Tensor = torch.zeros(max_key + 1,
+                                         requires_grad=False,
+                                         device=device)
+        for k,v in ItoMass.items():
+            Mass_Lookup_Tensor[k] = v
+
+    if Mass_Lookup_Tensor.device != device:
+        Mass_Lookup_Tensor = Mass_Lookup_Tensor.to(device)
+
+    return Mass_Lookup_Tensor[Y]
 
 
 def encode(AA: str):

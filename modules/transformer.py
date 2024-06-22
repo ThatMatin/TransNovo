@@ -5,6 +5,9 @@ import torch.nn.functional as F
 from typing import Optional
 from rotary_embedding_torch import RotaryEmbedding
 
+from tokenizer.fragments import create_fragments_tensor
+from tokenizer.molecules import IONS_COUNT, RANGE_OF_WEIGHTS
+
 from .embedding import PeptideEmbedding, SpectrumEmbedding
 from .parameters import Parameters
 from tokenizer import get_vocab_size
@@ -141,7 +144,7 @@ class Decoder(nn.Module):
 class TransNovo(nn.Module):
     def __init__(self, params: Parameters):
         super().__init__()
-        self.peptide_emb = PeptideEmbedding(get_vocab_size(), params.d_model)
+        self.peptide_emb = PeptideEmbedding(RANGE_OF_WEIGHTS, IONS_COUNT, params.d_model,h_layer_dim=100, device=params.device)
         self.spectrum_emb = SpectrumEmbedding(params.d_model)
         self.enc = Encoder(params.d_model, params.d_ff, params.d_key, params.d_val, params.n_heads, params.dropout_rate)
         self.dec = Decoder(params.d_model, params.d_ff, params.d_key, params.d_val, params.n_heads, params.dropout_rate)
@@ -154,7 +157,8 @@ class TransNovo(nn.Module):
         Y_input = Y[:, :-1]
         X_mask, Y_mask = self.get_padding_masks(X, Y_input)
         X_enc = self.enc(self.spectrum_emb(X), X_mask)
-        model_out = self.dec(self.peptide_emb(Y_input), X_enc, pad_mask=Y_mask)
+        Y_frag = create_fragments_tensor(Y_input)
+        model_out = self.dec(self.peptide_emb(Y_frag), X_enc, pad_mask=Y_mask)
         return self.ll(model_out)
 
 
@@ -179,7 +183,8 @@ class TransNovo(nn.Module):
         while True:
             x_m, _ = self.get_padding_masks(x, idx)
             encoded_x = self.enc(self.spectrum_emb(x), x_m)
-            dec_out = self.dec(self.peptide_emb(idx), encoded_x)
+            frags = create_fragments_tensor(idx)
+            dec_out = self.dec(self.peptide_emb(frags), encoded_x)
             probs = F.softmax(self.ll(dec_out), dim=-1)[:, -1, :]
             next_aa = torch.multinomial(probs.squeeze(), num_samples=1, replacement=True).unsqueeze(0)
             
@@ -205,9 +210,9 @@ class TransNovo(nn.Module):
     def introduce(self):
         p = self.hyper_params
         t = "\n>>>>>>>>>>>>>>>>> TransNovo <<<<<<<<<<<<<<<<<<<"
-        t += f"\n\td_model: {p.d_model}\n\tn_heads: {p.n_heads}\n\tlr: {p.learning_rate}"
-        t += f"\n\td_key=d_val=d_query: {p.d_key}\n\td_ff: {p.d_ff}\n\tdropout: {p.dropout_rate}"
-        t += f"\n\tLen X: {p.max_spectrum_length}\n\tLen Y: {p.max_peptide_lenght}"
+        t += f"\nd_model: {p.d_model}\nn_heads: {p.n_heads}\nlr: {p.learning_rate}"
+        t += f"\nd_key=d_val=d_query: {p.d_key}\nd_ff: {p.d_ff}\ndropout: {p.dropout_rate}"
+        t += f"\nLen X: {p.max_spectrum_length}\nLen Y: {p.max_peptide_lenght}"
         t += f"\nModel parameters: {self.total_param_count()}"
         t += f"\nNum data points: {p.data_point_count}\noptim: Adam"
         t += f"\nBatch size: {p.batch_size}"
