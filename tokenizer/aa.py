@@ -89,7 +89,7 @@ def decode(I: List[int]):
     return ''.join([ItoAA[i] for i in I])
  
 
-def pad_encoded_seq(aa_seq: List[int], max_len: int):
+def pad_encoded_seq(aa_seq: List[int], max_len: int) -> List[int]:
     s = [START_TOKEN] + aa_seq + [END_TOKEN]
     y_offset = max_len - len(s)
     if y_offset:
