@@ -77,7 +77,7 @@ class MSPManager(Dataset):
 
         if self.X is None or self.Y is None:
             self.X = torch.empty((0, x_len, 2))
-            self.Y = torch.empty((0, y_len))
+            self.Y = torch.empty((0, y_len), dtype=torch.int64)
 
         max_x, max_y = self.get_x_y_max_len([file])
         if max_x > x_len or max_y > y_len:
@@ -178,7 +178,9 @@ class MSPManager(Dataset):
                 x_tensor[batch_counter, peak_counter, :] = torch.tensor([mz, intensity])
                 peak_counter += 1
 
-    def discretize(self, X: torch.Tensor) -> torch.Tensor:
+    def discretize(self):
+        assert isinstance(self.X, torch.Tensor)
+        X = self.X
         _, indices = torch.sort(X[:, :, 1], descending=True)
         sorted_indices = indices.unsqueeze(-1).expand(-1, -1, 2)
         X_sorted = X.gather(1, sorted_indices)
@@ -210,7 +212,7 @@ class MSPManager(Dataset):
         X_intens_disc = X_w33_normalized.clone()
         X_intens_disc[:, :, 1] = discretized
 
-        return X_intens_disc
+        self.X = X_intens_disc
 
 
     def __len__(self):
