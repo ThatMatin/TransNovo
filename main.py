@@ -19,7 +19,10 @@ def main():
 
     # Data preparation
     data = D.MSPManager()
-    data.auto_create("datafiles", batch_size=100000, size_limit=p.max_file_size)
+    data.auto_create(p.data_path,
+                     batch_size=100000,
+                     size_limit=p.max_file_size,
+                     is_discretized=True)
     data.to(p.device)
 
     # Create model

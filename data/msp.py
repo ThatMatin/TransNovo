@@ -22,14 +22,16 @@ class MSPManager(Dataset):
         self.X = None
         self.Y = None
         self.consumed_files = []
+        self.is_discretized = False
 
 
-    def auto_create(self, files_path: str="datafiles",batch_size: int=50000, size_limit: float=10.):
+    def auto_create(self, files_path: str="datafiles",batch_size: int=50000, size_limit: float=10., is_discretized: bool=False):
         """
         Automatically inspects files in the path, whose size is below threshold
         gets max lenght of peptide and peaks across all data.
         Reads in .msp files and creates data tensors and finally stores them.
         """
+        self.is_discretized = is_discretized
         files = self.get_files_list(files_path, size_limit)
         max_x, max_y = self.get_x_y_max_len(files)
         max_x += 2 # allocate space for <SOS>, <EOS>
@@ -88,6 +90,8 @@ class MSPManager(Dataset):
             pos = 0
             while True:
                 x_tensor, y_tensor, pos, count = self.get_batch_n_encode(handle, pos, batch_size, x_len, y_len)
+                if self.is_discretized:
+                    x_tensor = self.discretize(x_tensor)
                 self.X = torch.cat((self.X, x_tensor[:count]), dim=0)
                 self.Y = torch.cat((self.Y, y_tensor[:count]), dim=0)
                 if pos == 0:
@@ -97,7 +101,8 @@ class MSPManager(Dataset):
     def save(self, save_path:os.PathLike):
         if self.X is not None and self.Y is not None:
             checkpoint = {"X": self.X, "Y": self.Y,
-                          "files": self.consumed_files}
+                          "files": self.consumed_files,
+                          "is_discretized": self.is_discretized}
             torch.save(checkpoint, save_path)
             print(f"Dataset saved to {save_path}.")
         else:
@@ -110,9 +115,12 @@ class MSPManager(Dataset):
             self.X = checkpoint["X"]
             self.Y = checkpoint["Y"]
             self.consumed_files = checkpoint["files"]
+            self.is_discretized = checkpoint["is_discretized"]
+
             assert isinstance(self.X, torch.Tensor)
             assert isinstance(self.Y, torch.Tensor)
             print(f"Dataset loaded from {data_path}.")
+
         except FileNotFoundError:
             print(f"No dataset found at {data_path}. Initialized empty dataset.")
 
@@ -144,7 +152,10 @@ class MSPManager(Dataset):
 
 
     def get_save_path(self, max_x_count, max_y_length) -> os.PathLike:
-        return Path(f"X{max_x_count}Y{max_y_length}.tensor")
+        txt = f"X{max_x_count}Y{max_y_length}"
+        if self.is_discretized:
+            txt += "D"
+        return Path(txt + ".tensor")
 
 
     def get_batch_n_encode(self, file_handle:TextIO, pos:int, batch_size:int, max_x:int, max_y:int):
@@ -178,9 +189,7 @@ class MSPManager(Dataset):
                 x_tensor[batch_counter, peak_counter, :] = torch.tensor([mz, intensity])
                 peak_counter += 1
 
-    def discretize(self):
-        assert isinstance(self.X, torch.Tensor)
-        X = self.X
+    def discretize(self, X: torch.Tensor) -> torch.Tensor:
         _, indices = torch.sort(X[:, :, 1], descending=True)
         sorted_indices = indices.unsqueeze(-1).expand(-1, -1, 2)
         X_sorted = X.gather(1, sorted_indices)
@@ -212,7 +221,7 @@ class MSPManager(Dataset):
         X_intens_disc = X_w33_normalized.clone()
         X_intens_disc[:, :, 1] = discretized
 
-        self.X = X_intens_disc
+        return X_intens_disc
 
 
     def __len__(self):
