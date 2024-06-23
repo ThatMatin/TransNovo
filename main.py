@@ -1,6 +1,6 @@
 import data as D
-from modules.parameters import Parameters
 import training
+from modules.parameters import Parameters
 from torch.nn import CrossEntropyLoss
 from data.split import get_train_test_dataloaders
 from interrupt import InterruptHandler
@@ -8,8 +8,9 @@ from modules import TransNovo
 
 
 def main():
-    p = Parameters(d_model=256, d_ff=1024, batch_size=32, max_file_size=300, lr=1e-5)
-    data = D.MSP(p)
+    p = Parameters(d_model=256, d_ff=1024, batch_size=32, max_file_size=500, lr=1e-5)
+    data = D.MSPManager()
+    data.auto_create("datafiles", batch_size=100000, size_limit=p.max_file_size)
     model = TransNovo(p)
     model.load_if_file_exists()
     model.hyper_params.learning_rate = 1e-2

@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, TextIO, Tuple
 import torch
 from torch.utils.data import Dataset
 from pathlib import Path
@@ -21,8 +21,10 @@ class MSPManager(Dataset):
         super().__init__()
         self.X = None
         self.Y = None
+        self.consumed_files = []
 
-    def auto_create(self, files_path: str="datafiles",batch_size: int=20000, size_limit: float=10.):
+
+    def auto_create(self, files_path: str="datafiles",batch_size: int=50000, size_limit: float=10.):
         """
         Automatically inspects files in the path, whose size is below threshold
         gets max lenght of peptide and peaks across all data.
@@ -32,8 +34,9 @@ class MSPManager(Dataset):
         max_x, max_y = self.get_x_y_max_len(files)
         max_x += 2 # allocate space for <SOS>, <EOS>
         max_y += 2
+        save_path = self.get_save_path(max_x, max_y)
+        self.load(save_path)
         self.read_files(files, batch_size, max_x, max_y)
-        save_path = self.__get_save_path(max_x, max_y)
         self.save(Path(save_path))
 
 
@@ -44,7 +47,7 @@ class MSPManager(Dataset):
         max_x = 0
         max_y = 0
         for f in files_list:
-            print(f"inspecting: {f}")
+            print(f"inspecting max sizes: {f}")
             file_max_x, file_max_y = self.__get_x_y_max_len_for_file(f)
             max_x = max(max_x, file_max_x)
             max_y = max(max_y, file_max_y)
@@ -56,26 +59,45 @@ class MSPManager(Dataset):
         """
         returns (X, Y)
         """
+        for f in tqdm(files):
+            self.read_new_file(f, batch_size, x_len, y_len)
+            self.consumed_files.append(f)
+
+        assert isinstance(self.X, torch.Tensor)
+        assert isinstance(self.Y, torch.Tensor)
+        return self.X, self.Y
+
+
+    def read_new_file(self, file: os.PathLike, batch_size: int,
+                      x_len: int, y_len: int):
+
+        if file in self.consumed_files:
+            print(f"file {file} has been already consumed.")
+            return
+
         if self.X is None or self.Y is None:
             self.X = torch.empty((0, x_len, 2))
             self.Y = torch.empty((0, y_len))
-        for f in tqdm(files):
-            print(f"parsing {f} to tensor...")
+
+        max_x, max_y = self.get_x_y_max_len([file])
+        if max_x > x_len or max_y > y_len:
+            raise IndexError("width of data is larger than max")
+
+        with gzip.open(file,"rt") as handle:
+            print(f"parsing {file} to tensor...")
             pos = 0
             while True:
-                x_tensor, y_tensor, pos, count = self.get_batch_n_encode(f, pos, batch_size, x_len, y_len)
+                x_tensor, y_tensor, pos, count = self.get_batch_n_encode(handle, pos, batch_size, x_len, y_len)
                 self.X = torch.cat((self.X, x_tensor[:count]), dim=0)
                 self.Y = torch.cat((self.Y, y_tensor[:count]), dim=0)
                 if pos == 0:
                     break
 
-        return self.X, self.Y
 
     def save(self, save_path:os.PathLike):
         if self.X is not None and self.Y is not None:
             checkpoint = {"X": self.X, "Y": self.Y,
-                          "max_X": self.max_x_count,
-                          "max_Y": self.max_y_length}
+                          "files": self.consumed_files}
             torch.save(checkpoint, save_path)
             print(f"Dataset saved to {save_path}.")
         else:
@@ -87,15 +109,18 @@ class MSPManager(Dataset):
             assert isinstance(checkpoint, Dict)
             self.X = checkpoint["X"]
             self.Y = checkpoint["Y"]
-            self.max_x_count = checkpoint["max_X"]
-            self.max_y_length = checkpoint["max_Y"]
+            self.consumed_files = checkpoint["files"]
             assert isinstance(self.X, torch.Tensor)
             assert isinstance(self.Y, torch.Tensor)
             print(f"Dataset loaded from {data_path}.")
         except FileNotFoundError:
             print(f"No dataset found at {data_path}. Initialized empty dataset.")
 
-    def to(self, device:torch.device):
+
+    def to(self, device:torch.device|str):
+        """
+        In place transfer to new device
+        """
         assert isinstance(self.X, torch.Tensor)
         assert isinstance(self.Y, torch.Tensor)
         self.X = self.X.to(device)
@@ -118,42 +143,87 @@ class MSPManager(Dataset):
         return files
 
 
-    def __get_save_path(self, max_x_count, max_y_length):
-        return f"X{max_x_count}Y{max_y_length}.tensor"
+    def get_save_path(self, max_x_count, max_y_length) -> os.PathLike:
+        return Path(f"X{max_x_count}Y{max_y_length}.tensor")
 
 
-    def get_batch_n_encode(self, file:os.PathLike, pos:int, batch_size:int, max_x:int, max_y:int):
+    def get_batch_n_encode(self, file_handle:TextIO, pos:int, batch_size:int, max_x:int, max_y:int):
         x_tensor = torch.zeros((batch_size, max_x, 2))
-        # NOTE: y_tensor int or float?
         y_tensor = torch.zeros((batch_size, max_y), dtype=torch.int64)
         batch_counter = -1 # for proper indexing
         peak_counter = 0
 
-        with gzip.open(file,"rt") as f:
-            f.seek(pos)
-            while True:
-                # loop line
-                pos = f.tell()
-                line = f.readline()
-                # EOF
-                if line == '':
-                    return x_tensor, y_tensor, 0, batch_counter + 1
+        file_handle.seek(pos)
+        while True:
+            # loop line
+            pos = file_handle.tell()
+            line = file_handle.readline()
+            # EOF
+            if line == '':
+                return x_tensor, y_tensor, 0, batch_counter + 1
 
-                line = line.strip()
-                if line.startswith("Name:"):
-                    if batch_counter == batch_size -1:
-                        return x_tensor, y_tensor, pos, batch_counter + 1
-                    batch_counter += 1
-                    peak_counter = 0
-                    pep_seq = line.split()[1]  # Assuming the format "Name: SEQUENCE"
-                    pep_seq = re.sub(r'/\d+$', '', pep_seq)
-                    pep_seq_enc_pad = pad_encoded_seq(encode(pep_seq), max_y)
-                    y_tensor[batch_counter, :] = torch.tensor(pep_seq_enc_pad)
+            line = line.strip()
+            if line.startswith("Name:"):
+                if batch_counter == batch_size -1:
+                    return x_tensor, y_tensor, pos, batch_counter + 1
+                batch_counter += 1
+                peak_counter = 0
+                pep_seq = line.split()[1]  # Assuming the format "Name: SEQUENCE"
+                pep_seq = re.sub(r'/\d+$', '', pep_seq)
+                pep_seq_enc_pad = pad_encoded_seq(encode(pep_seq), max_y)
+                y_tensor[batch_counter, :] = torch.tensor(pep_seq_enc_pad)
 
-                elif re.match(r'^\d', line):
-                    mz, intensity = map(float, line.split()[:2])
-                    x_tensor[batch_counter, peak_counter, :] = torch.tensor([mz, intensity])
-                    peak_counter += 1
+            elif re.match(r'^\d', line):
+                mz, intensity = map(float, line.split()[:2])
+                x_tensor[batch_counter, peak_counter, :] = torch.tensor([mz, intensity])
+                peak_counter += 1
+
+    def discretize(self, X: torch.Tensor) -> torch.Tensor:
+        _, indices = torch.sort(X[:, :, 1], descending=True)
+        sorted_indices = indices.unsqueeze(-1).expand(-1, -1, 2)
+        X_sorted = X.gather(1, sorted_indices)
+
+        # Non zero elements per spectrum (batch element)
+        non_zeros_counts = X_sorted.count_nonzero(1)[:, 0]
+        # start indeces of the weakest 33%
+        w33_st_idxs = (2/3 * non_zeros_counts).int()
+
+        # pluck the weakest 33% and mean them, then create a tensor from means
+        means_list = []
+        for b in range(X.size(0)):
+            m = X_sorted[b, w33_st_idxs[b]:non_zeros_counts[b], 1].mean()
+            means_list.append(m)
+        w33_means = torch.stack(means_list)
+
+        w33_means_div = w33_means.unsqueeze(-1).unsqueeze(-1).expand_as(X).clone()
+        w33_means_div[:, :, 0] = 1
+
+        X_w33_normalized = X / w33_means_div
+
+        intensities = X_w33_normalized[:, :, 1]
+        discretized = torch.zeros_like(intensities)
+        discretized[intensities >= 10] = 3
+        discretized[(intensities >= 2) & (intensities < 10)] = 2
+        discretized[(intensities >= 0.05) & (intensities < 2)] = 1
+        discretized[intensities < 0.05] = 0
+
+        X_intens_disc = X_w33_normalized.clone()
+        X_intens_disc[:, :, 1] = discretized
+
+        return X_intens_disc
+
+
+    def __len__(self):
+        assert isinstance(self.X, torch.Tensor)
+        return self.X.shape[0]
+
+
+    def __getitem__(self, index):
+        assert isinstance(self.X, torch.Tensor)
+        assert isinstance(self.Y, torch.Tensor)
+        if torch.is_tensor(index):
+            index = index.tolist()
+        return self.X[index], self.Y[index]
 
 
     def __get_x_y_max_len_for_file(self, file_path):
@@ -192,20 +262,17 @@ class MSP(Dataset):
     """
     def __init__(self, params: Parameters):
         super().__init__()
-        self.y_tensors = MSPTensor("x_dataset.pth")
-        self.x_tensors = MSPTensor("y_dataset.pth")
         self.MAX_X = params.max_spectrum_length
         self.MAX_Y = params.max_peptide_lenght
         self.X = torch.tensor([])
         self.Y = torch.tensor([])
 
-        files = []
         _spectra = []
         for p in Path(params.data_path).glob("*.msp.gz"):
             if os.path.getsize(p)*1e-6 > params.max_file_size:
                 continue
             print(f"*> reading file: {p} | size: {os.path.getsize(p)*1e-6:.2f}")
-            _spectra += _parse_msp_gz(p)
+            _spectra += self._parse_msp_gz(p)
 
         # FIX: important
         # self.set_max_lenghts(params, _spectra)
@@ -277,66 +344,29 @@ class MSP(Dataset):
         return self.X[index], self.Y[index]
 
 
-class MSPTensor:
-    def __init__(self, file_path):
-        self.file_path = file_path
-        self.dataset = None
+    def _parse_msp_gz(self, file_path):
+        with gzip.open(file_path, 'rt') as file:
+            content = file.read()
 
-    def save(self):
-        if self.dataset is not None:
-            torch.save(self.dataset, self.file_path)
-            print(f"Dataset saved to {self.file_path}.")
-        else:
-            print("No dataset to save.")
+        entries = content.split("\n\n")
+        parsed_entries = []
 
-    def load(self):
-        try:
-            self.dataset = torch.load(self.file_path)
-            print(f"Dataset loaded from {self.file_path}.")
-        except FileNotFoundError:
-            print(f"No dataset found at {self.file_path}. Initialized empty dataset.")
-            self.dataset = {"X" :torch.empty(), "Y": torch.empty()}
+        for entry in entries:
+            if not entry.strip():
+                continue
+            
+            peaks = []
+            name = None
+            for line in entry.split('\n'):
+                if line.startswith('Name:'):
+                    # Remove the suffix from the name
+                    name = re.split(r'/\d+', line.split('Name: ')[1].strip())[0]
+                    name = encode(name)
+                elif re.match(r'^\d', line):
+                    mz, intensity = map(float, line.strip().split()[:2])
+                    peaks.append((mz, intensity))
 
-    def append(self, X: torch.Tensor, Y: torch.Tensor):
-        assert isinstance(self.dataset, Dict)
+            if peaks and name:
+                parsed_entries.append((name, peaks))
         
-        if self.dataset is None:
-            self.dataset["X"] = X
-            self.dataset["Y"] = Y
-        else:
-            assert self.dataset["X"].size(1) == X.size(1)
-            assert self.dataset["Y"].size(1) == Y.size(1)
-            self.dataset["X"] = torch.cat((self.dataset["X"], X))
-            self.dataset["Y"] = torch.cat((self.dataset["Y"], Y))
-        print(f"Appended new data to the dataset. New dataset shape: {self.dataset["X"].shape}")
-
-    def get_dataset(self):
-        return self.dataset
-
-
-def _parse_msp_gz(file_path):
-    with gzip.open(file_path, 'rt') as file:
-        content = file.read()
-
-    entries = content.split("\n\n")
-    parsed_entries = []
-
-    for entry in entries:
-        if not entry.strip():
-            continue
-        
-        peaks = []
-        name = None
-        for line in entry.split('\n'):
-            if line.startswith('Name:'):
-                # Remove the suffix from the name
-                name = re.split(r'/\d+', line.split('Name: ')[1].strip())[0]
-                name = encode(name)
-            elif re.match(r'^\d', line):
-                mz, intensity = map(float, line.strip().split()[:2])
-                peaks.append((mz, intensity))
-
-        if peaks and name:
-            parsed_entries.append((name, peaks))
-    
-    return parsed_entries
+        return parsed_entries
