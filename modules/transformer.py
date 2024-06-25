@@ -146,8 +146,12 @@ class TransNovo(nn.Module):
         super().__init__()
         self.peptide_emb = PeptideEmbedding(RANGE_OF_WEIGHTS, IONS_COUNT, params.d_model,h_layer_dim=50, device=params.device)
         self.spectrum_emb = SpectrumEmbedding(params.d_model)
-        self.enc = Encoder(params.d_model, params.d_ff, params.d_key, params.d_val, params.n_heads, params.dropout_rate)
-        self.dec = Decoder(params.d_model, params.d_ff, params.d_key, params.d_val, params.n_heads, params.dropout_rate)
+        self.encoder = nn.ModuleList([Encoder(params.d_model, params.d_ff, params.d_key,
+                                              params.d_val, params.n_heads, params.dropout_rate)
+                                      for _ in range(params.n_layers)])
+        self.decoder = nn.ModuleList([Decoder(params.d_model, params.d_ff, params.d_key,
+                                              params.d_val, params.n_heads, params.dropout_rate)
+                                      for _ in range(params.n_layers)])
         self.ll = nn.Linear(params.d_model, get_vocab_size())
         self.N_named_parameters = None
         self.hyper_params = params
@@ -156,10 +160,17 @@ class TransNovo(nn.Module):
     def forward(self, X, Y: torch.Tensor):
         Y_input = Y[:, :-1]
         X_mask, Y_mask = self.get_padding_masks(X, Y_input)
-        X_enc = self.enc(self.spectrum_emb(X), X_mask)
-        Y_frag = create_fragments_tensor(Y_input)
-        model_out = self.dec(self.peptide_emb(Y_frag), X_enc, pad_mask=Y_mask)
-        return self.ll(model_out)
+        Y_input = create_fragments_tensor(Y_input)
+
+        dec_out = self.spectrum_emb(X)
+        for enc in self.encoder:
+            dec_out = enc(dec_out, pad_mask=X_mask)
+
+        dec_out = self.peptide_emb(Y_input)
+        for dec in self.decoder:
+            dec_out = dec(dec_out, dec_out, pad_mask=Y_mask)
+
+        return self.ll(dec_out)
 
 
     def get_padding_masks(self, X, Y):

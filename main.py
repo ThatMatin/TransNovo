@@ -10,9 +10,10 @@ from modules import TransNovo
 def main():
     p = Parameters(
             d_model=256,
+            n_layers=6,
             d_ff=1024,
             batch_size=32,
-            max_file_size=10,
+            max_file_size=30,
             lr=1e-5,
             n_epochs=10,
             )

@@ -11,6 +11,7 @@ class Parameters:
     """
     def __init__(self,
                  d_model: int = 64,
+                 n_layers: int = 6,
                  n_heads: int = 8,
                  data_path: str = "./datafiles",
                  n_epochs: int = 100,
@@ -29,6 +30,7 @@ class Parameters:
 
         # model definition
         self.d_model = d_model
+        self.n_layers = n_layers
         self.n_heads = n_heads
         self.d_ff = d_ff
         self.d_key = d_model // n_heads
@@ -62,8 +64,8 @@ class Parameters:
         self.learning_rate = lr
 
     def model_save_path(self):
-        f = f"tn_d{self.d_model}_h{self.n_heads}_ff{self.d_ff}_dr{10*self.dropout_rate}"
-        f += f"_X{self.max_spectrum_length}_Y{self.max_peptide_lenght}.pth"
+        f = f"d{self.d_model}n{self.n_layers}h{self.n_heads}ff{self.d_ff}dr{10*self.dropout_rate}"
+        f += f"X{self.max_spectrum_length}Y{self.max_peptide_lenght}.pth"
         return f
 
 
