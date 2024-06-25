@@ -1,0 +1,7 @@
+matplotlib==3.8.4
+numpy==2.0.0
+pandas==2.2.2
+rotary_embedding_torch==0.6.2
+seaborn==0.13.2
+torch==2.3.0+cu121
+tqdm==4.66.4
