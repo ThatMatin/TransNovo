@@ -34,15 +34,19 @@ class PeptideEmbedding(nn.Module):
 class SpectrumEmbedding(nn.Module):
     def __init__(self, d_model, device="cuda"):
         super().__init__()
-        self.embedding = nn.Linear(2, d_model, device=device)
+        self.mz_embedding = nn.Linear(1, d_model, device=device)
+        self.intensity_embedding = nn.Linear(1, d_model, device=device)
         self.ln = nn.LayerNorm(d_model, device=device)
         self._init_weights()
 
     def _init_weights(self):
-        nn.init.kaiming_normal_(self.embedding.weight, nonlinearity='relu')
-        if self.embedding.bias is not None:
-            nn.init.zeros_(self.embedding.bias)
+        nn.init.kaiming_normal_(self.intensity_embedding.weight)
+        nn.init.kaiming_normal_(self.mz_embedding.weight)
+        nn.init.zeros_(self.intensity_embedding.bias)
+        nn.init.zeros_(self.mz_embedding.bias)
 
     def forward(self, x):
-        out = self.embedding(x)
+        mz_out = self.mz_embedding(x[:, :, 0].unsqueeze(-1))
+        int_out = self.intensity_embedding(x[:, :, 1].unsqueeze(-1))
+        out = mz_out + int_out
         return self.ln(out)

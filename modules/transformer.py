@@ -183,6 +183,7 @@ class TransNovo(nn.Module):
         return X_mask.transpose(-2, -1), Y_mask.transpose(-2, -1)
 
 
+    # FIX: multilayer
     @torch.no_grad()
     def generate(self, x):
         self.eval()
