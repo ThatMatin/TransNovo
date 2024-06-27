@@ -3,15 +3,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
-from rotary_embedding_torch import RotaryEmbedding
-
-from tokenizer.fragments import create_fragments_tensor
-from tokenizer.molecules import IONS_COUNT, RANGE_OF_WEIGHTS
-
 from .embedding import PeptideEmbedding, SpectrumEmbedding
 from .parameters import Parameters
 from tokenizer import get_vocab_size
-from tokenizer.aa import END_TOKEN, PAD_TOKEN
+from tokenizer.aa import END_TOKEN, PAD_TOKEN, mass_tensor
 
 MODEL_STATE_DICT = "model_state_dict"
 MODEL_HYPERPARAMETERS = "hyper_params"
@@ -27,7 +22,7 @@ class AttentionHead(nn.Module):
         # keep the dimensions large enough to cover max seq lenghth (200 here)
         self.register_buffer("tril", torch.tril(torch.ones(200, 200)))
         self.is_masked = is_masked
-        self.rotary = RotaryEmbedding(d_key)
+        self._init_weights()
 
     def forward(self, q: torch.Tensor, kv: Optional[torch.Tensor] = None,
                 pad_mask: Optional[torch.Tensor] = None):
@@ -37,9 +32,6 @@ class AttentionHead(nn.Module):
         K = self.key(kv)
         V = self.value(kv)
         Q = self.query(q)
-
-        Q = self.rotary.rotate_queries_or_keys(Q)
-        K = self.rotary.rotate_queries_or_keys(K)
 
         W = (Q @ K.transpose(-2, -1))/ C**0.5
         if self.is_masked:
@@ -52,6 +44,11 @@ class AttentionHead(nn.Module):
         W = self.dropout(W)
         out = W @ V
         return out
+
+    def _init_weights(self):
+        nn.init.xavier_normal_(self.key.weight)
+        nn.init.xavier_normal_(self.query.weight)
+        nn.init.xavier_normal_(self.value.weight)
 
 
 class MultiHeadAttention(nn.Module):
@@ -144,7 +141,7 @@ class Decoder(nn.Module):
 class TransNovo(nn.Module):
     def __init__(self, params: Parameters):
         super().__init__()
-        self.peptide_emb = PeptideEmbedding(RANGE_OF_WEIGHTS, IONS_COUNT, params.d_model,h_layer_dim=50, device=params.device)
+        self.peptide_emb = PeptideEmbedding(params.d_model, device=params.device)
         self.spectrum_emb = SpectrumEmbedding(params.d_model)
         self.encoder = nn.ModuleList([Encoder(params.d_model, params.d_ff, params.d_key,
                                               params.d_val, params.n_heads, params.dropout_rate)
@@ -160,15 +157,15 @@ class TransNovo(nn.Module):
     def forward(self, X, Y: torch.Tensor):
         Y_input = Y[:, :-1]
         X_mask, Y_mask = self.get_padding_masks(X, Y_input)
-        Y_input = create_fragments_tensor(Y_input)
+        Y_input = mass_tensor(Y_input)
 
-        dec_out = self.spectrum_emb(X)
+        enc_out = self.spectrum_emb(X)
         for enc in self.encoder:
-            dec_out = enc(dec_out, pad_mask=X_mask)
+            enc_out = enc(enc_out, pad_mask=X_mask)
 
         dec_out = self.peptide_emb(Y_input)
         for dec in self.decoder:
-            dec_out = dec(dec_out, dec_out, pad_mask=Y_mask)
+            dec_out = dec(dec_out, enc_out, pad_mask=Y_mask)
 
         return self.ll(dec_out)
 
@@ -183,28 +180,35 @@ class TransNovo(nn.Module):
         return X_mask.transpose(-2, -1), Y_mask.transpose(-2, -1)
 
 
-    # FIX: multilayer
-    @torch.no_grad()
-    def generate(self, x):
+    def generate(self, X):
         self.eval()
+        with torch.inference_mode():
 
-        if len(x.shape) == 2:
-            x = x.unsqueeze(0)
+            batch_size = X.size(0)
+            Y = torch.ones((batch_size , 1), device=self.hyper_params.device, dtype=torch.int64)
+            while True:
+                X_mask, _ = self.get_padding_masks(X, Y)
+                Y_input = mass_tensor(Y)
 
-        idx = torch.ones((1 , 1),device=self.hyper_params.device, dtype=torch.int64)
-        while True:
-            x_m, _ = self.get_padding_masks(x, idx)
-            encoded_x = self.enc(self.spectrum_emb(x), x_m)
-            frags = create_fragments_tensor(idx)
-            dec_out = self.dec(self.peptide_emb(frags), encoded_x)
-            probs = F.softmax(self.ll(dec_out), dim=-1)[:, -1, :]
-            next_aa = torch.multinomial(probs.squeeze(), num_samples=1, replacement=True).unsqueeze(0)
-            
-            idx = torch.cat((idx, next_aa), dim=1)
-            if next_aa.item() == END_TOKEN:
-                break
+                enc_out = self.spectrum_emb(X)
+                for enc in self.encoder:
+                    enc_out = enc(enc_out, pad_mask=X_mask)
 
-        return idx.squeeze()
+                dec_out = self.peptide_emb(Y_input)
+                for dec in self.decoder:
+                    dec_out = dec(dec_out, enc_out)
+
+                # take output of last token in the sequence
+                pre_prob = self.ll(dec_out)[:, -1, :]
+                probs = F.softmax(pre_prob, dim=-1)
+                next_aa = torch.multinomial(probs, num_samples=1, replacement=True)
+
+                Y = torch.cat((Y, next_aa), dim=1)
+                # break out if all in the batch reached <END_TOKEN>
+                if Y.size(1) == 100 or (Y == END_TOKEN).count_nonzero() == batch_size:
+                    break
+
+            return Y
 
 
     def finish_training(self, epoch: int, train_result_matrix: torch.Tensor,
@@ -224,7 +228,7 @@ class TransNovo(nn.Module):
         t = "\n>>>>>>>>>>>>>>>>> TransNovo <<<<<<<<<<<<<<<<<<<"
         t += f"\nd_model: {p.d_model}\nn_heads: {p.n_heads}\nlr: {p.learning_rate}"
         t += f"\nd_key=d_val=d_query: {p.d_key}\nd_ff: {p.d_ff}\ndropout: {p.dropout_rate}"
-        t += f"\nLen X: {p.max_spectrum_length}\nLen Y: {p.max_peptide_lenght}"
+        t += f"\nLen X: {p.max_spectrum_length}\nLen Y: {p.max_peptide_length}"
         t += f"\nModel parameters: {self.total_param_count()}"
         t += f"\nNum data points: {p.data_point_count}\noptim: Adam"
         t += f"\nBatch size: {p.batch_size}"
@@ -258,6 +262,7 @@ class TransNovo(nn.Module):
     def view_grad_norms(self):
         for n, p in self.named_parameters():
             print(f"{n}: {p.grad.norm()}")
+
 
     def grad_norms_mean(self) -> torch.Tensor:
         if self.N_named_parameters is None:

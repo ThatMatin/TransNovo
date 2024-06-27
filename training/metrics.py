@@ -2,7 +2,7 @@ import torch
 
 def mean_batch_acc(logits: torch.Tensor, labels: torch.Tensor):
     """
-    Note that labels my be already aligned
+    Note that labels must be already aligned
     """
     batch_size = labels.size(0)
     batch_accs = torch.zeros(batch_size)

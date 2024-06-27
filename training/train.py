@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import time
 from torch.optim import Adam
-from torch.optim.lr_scheduler import LRScheduler
+from torch.optim.lr_scheduler import LambdaLR
 from tqdm.auto import tqdm
 from torch.utils import data
 from tqdm.auto import tqdm
@@ -18,6 +18,7 @@ def train_step(model: nn.Module,
                optimizer: torch.optim.Optimizer,
                loss_fn: nn.Module,
                train_dl: data.DataLoader,
+               scheduler: Optional[LambdaLR],
                interruptHandler: InterruptHandler):
 
     result_matrix = torch.zeros((len(train_dl), 3))
@@ -37,6 +38,9 @@ def train_step(model: nn.Module,
 
         loss.backward()
         optimizer.step()
+
+        if scheduler:
+            scheduler.step()
 
         result_matrix[i, 0] = loss.detach()
         result_matrix[i, 1] = mean_batch_acc(logits, tgt_output)
@@ -80,20 +84,31 @@ def update_lr(optimizer: torch.optim.Optimizer, lr: float):
     for p in optimizer.param_groups:
         p['lr'] = lr
 
-def init_adam(model: TransNovo):
+def init_adam(model: TransNovo, steps):
     p = model.hyper_params
     betas = p.optimizer_adam_betas
     eps = p.optimizer_adam_eps
     lr = p.learning_rate
 
-    a = Adam(model.parameters(), lr, betas, eps)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(a, T_max=50, eta_min=0.0001)
+    total_steps = p.n_epochs * steps
+    print(f"total steps: {total_steps}")
+    warmup_steps = int(total_steps * 0.001)
+    print(f"warmup steps: {warmup_steps}")
+    def lr_lambda(current_step: int):
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        else:
+            progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+            return 0.5 * (1.0 + torch.cos(torch.tensor(progress * 3.141592653589793))).item()
+
+    a = Adam(model.parameters(), lr, betas, eps, 1e-5)
+    scheduler = LambdaLR(a, lr_lambda)
     if len(model.hyper_params.optimizer_state_dict) != 0:
         a.load_state_dict(model.hyper_params.optimizer_state_dict)
     return a, scheduler
 
 
-def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interruptHandler: InterruptHandler, scheduler: Optional[LRScheduler] = None):
+def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interruptHandler: InterruptHandler, scheduler: Optional[LambdaLR] = None):
     rm_idx = 0
     lr = 0
     p = model.hyper_params
@@ -113,14 +128,11 @@ def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interrup
     for epoch in tqdm(range(start_epoch, end_epochs), desc="Epochs"):
         rm_idx = epoch - start_epoch
 
-        train_result_matrix[rm_idx] = training.train_step(model, optimizer, loss_fn, train_dl, interruptHandler)
+        train_result_matrix[rm_idx] = training.train_step(model, optimizer, loss_fn, train_dl, scheduler, interruptHandler)
         test_result_matrix[rm_idx] = training.test_step(model, loss_fn, test_dl, interruptHandler)
-
         # Update learning rate
         lr = optimizer.param_groups[0]['lr']
         p.learning_rate = lr
-        if scheduler:
-            scheduler.step()
 
         # calculate batch loss
         train_epoch_loss_tensor = train_result_matrix[rm_idx, :, 0]

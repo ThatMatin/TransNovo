@@ -274,13 +274,13 @@ class MSP(Dataset):
     def __init__(self, params: Parameters):
         super().__init__()
         self.MAX_X = params.max_spectrum_length
-        self.MAX_Y = params.max_peptide_lenght
+        self.MAX_Y = params.max_peptide_length
         self.X = torch.tensor([])
         self.Y = torch.tensor([])
 
         _spectra = []
         for p in Path(params.data_path).glob("*.msp.gz"):
-            if os.path.getsize(p)*1e-6 > params.max_file_size:
+            if os.path.getsize(p)*1e-6 > params.data_max_file_size:
                 continue
             print(f"*> reading file: {p} | size: {os.path.getsize(p)*1e-6:.2f}")
             _spectra += self._parse_msp_gz(p)
@@ -305,7 +305,7 @@ class MSP(Dataset):
         self.MAX_Y += 2 # started and end tokens accounted forse
         self.MAX_X += 2
         
-        if params.max_peptide_lenght < self.MAX_Y or \
+        if params.max_peptide_length < self.MAX_Y or \
                 params.max_spectrum_length < self.MAX_X:
             params.set_data_lenght_params(self.MAX_X, self.MAX_Y)
 

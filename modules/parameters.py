@@ -39,7 +39,7 @@ class Parameters:
 
         # train data
         self.max_spectrum_length = 250
-        self.max_peptide_lenght = 100
+        self.max_peptide_length = 100
         self.data_point_count = 0
 
         # optimizer
@@ -64,14 +64,9 @@ class Parameters:
         self.learning_rate = lr
 
     def model_save_path(self):
-        f = f"d{self.d_model}n{self.n_layers}h{self.n_heads}ff{self.d_ff}dr{10*self.dropout_rate}"
-        f += f"X{self.max_spectrum_length}Y{self.max_peptide_lenght}.pth"
+        f = f"D{self.d_model}N{self.n_layers}H{self.n_heads}FF{self.d_ff}DO{int(10*self.dropout_rate)}"
+        f += f"X{self.max_spectrum_length}Y{self.max_peptide_length}.pth"
         return f
-
-
-    def set_data_lenght_params(self, max_spectrum_lenght, max_peptide_lenght):
-        self.max_peptide_lenght = max_peptide_lenght
-        self.max_spectrum_length = max_spectrum_lenght
 
 
     def __call__(self, state_dict: Optional[dict] = None):
