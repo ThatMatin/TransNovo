@@ -35,7 +35,7 @@ class PeptideEmbedding(nn.Module):
     def _init_weights(self):
         for layer in self.net:
             if isinstance(layer, nn.Linear):
-                nn.init.kaiming_normal_(layer.weight)
+                nn.init.xavier_uniform_(layer.weight)
                 # NOTE: Setting bias to zero here causes large gradient norm
                 # if layer.bias is not None:
                 #     nn.init.zeros_(layer.bias)
@@ -53,7 +53,7 @@ class SpectrumEmbedding(nn.Module):
         self._init_weights()
 
     def _init_weights(self):
-        nn.init.kaiming_normal_(self.intensity_embedding.weight)
+        nn.init.xavier_uniform_(self.intensity_embedding.weight)
         nn.init.zeros_(self.intensity_embedding.bias)
 
     def forward(self, x):

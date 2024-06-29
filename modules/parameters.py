@@ -15,7 +15,7 @@ class Parameters:
                  n_heads: int = 8,
                  data_path: str = "./datafiles",
                  n_epochs: int = 100,
-                 warmup_steps: int = 10,
+                 warmup_steps: int = 1,
                  batch_size: int = 32,
                  d_ff: int = 512,
                  dropout_rate: float = 0.1,

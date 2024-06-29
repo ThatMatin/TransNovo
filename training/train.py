@@ -4,7 +4,6 @@ import torch.nn as nn
 import time
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LambdaLR
-from tqdm.auto import tqdm
 from torch.utils import data
 from tqdm.auto import tqdm
 
@@ -28,6 +27,11 @@ def train_step(model: nn.Module,
                          total=len(train_dl),
                          desc="over training set"):
         logits = model(X, Y)
+
+        # NOTE: For intensities with large values this returns nan
+        # one fix is to discretize
+        if torch.isnan(logits).any().item():
+            continue
 
         optimizer.zero_grad(True)
 
@@ -65,6 +69,9 @@ def test_step(model: nn.Module,
         for i, (X,Y) in tqdm(enumerate(test_dl),
                              total=len(test_dl),
                              desc="over test set"):
+            if interruptHandler.is_interrupted():
+                break
+
             logits = model(X, Y)
 
             tgt_output = Y[:, 1:]
@@ -74,8 +81,6 @@ def test_step(model: nn.Module,
             result_matrix[i, 0] = loss
             result_matrix[i, 1] = mean_batch_acc(logits, tgt_output)
 
-            if interruptHandler.is_interrupted():
-                break
 
     return result_matrix
 
@@ -84,16 +89,17 @@ def update_lr(optimizer: torch.optim.Optimizer, lr: float):
     for p in optimizer.param_groups:
         p['lr'] = lr
 
-def init_adam(model: TransNovo, steps):
+def init_adam(model: TransNovo):
     p = model.hyper_params
     betas = p.optimizer_adam_betas
     eps = p.optimizer_adam_eps
     lr = p.learning_rate
+    steps = int(p.data_point_count/p.batch_size)
+    total_steps = (p.n_epochs + p.n_epochs_sofar) * steps
+    warmup_steps = p.warmup_steps
 
-    total_steps = p.n_epochs * steps
-    print(f"total steps: {total_steps}")
-    warmup_steps = int(total_steps * 0.001)
-    print(f"warmup steps: {warmup_steps}")
+    print(f"total steps: {total_steps}\nwarmup steps: {warmup_steps}")
+
     def lr_lambda(current_step: int):
         if current_step < warmup_steps:
             return float(current_step) / float(max(1, warmup_steps))
@@ -115,6 +121,8 @@ def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interrup
 
     start_epoch = p.n_epochs_sofar
     end_epochs = p.n_epochs_sofar + p.n_epochs
+    ranger = tqdm(range(end_epochs), desc="Epochs")
+    ranger.update(start_epoch)
 
     s_time = time.time()
     # TODO: Find a proper place for it
@@ -125,7 +133,7 @@ def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interrup
     # loss, acc
     test_result_matrix = torch.zeros((p.n_epochs, len(test_dl), 2))
 
-    for epoch in tqdm(range(start_epoch, end_epochs), desc="Epochs"):
+    for epoch in ranger:
         rm_idx = epoch - start_epoch
 
         train_result_matrix[rm_idx] = training.train_step(model, optimizer, loss_fn, train_dl, scheduler, interruptHandler)
