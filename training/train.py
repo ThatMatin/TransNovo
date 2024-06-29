@@ -69,9 +69,6 @@ def test_step(model: nn.Module,
         for i, (X,Y) in tqdm(enumerate(test_dl),
                              total=len(test_dl),
                              desc="over test set"):
-            if interruptHandler.is_interrupted():
-                break
-
             logits = model(X, Y)
 
             tgt_output = Y[:, 1:]
@@ -80,6 +77,9 @@ def test_step(model: nn.Module,
 
             result_matrix[i, 0] = loss
             result_matrix[i, 1] = mean_batch_acc(logits, tgt_output)
+
+            if interruptHandler.is_interrupted():
+                break
 
 
     return result_matrix
@@ -93,12 +93,12 @@ def init_adam(model: TransNovo):
     p = model.hyper_params
     betas = p.optimizer_adam_betas
     eps = p.optimizer_adam_eps
-    lr = p.learning_rate
+    lr = p.new_learning_rate
     steps = int(p.data_point_count/p.batch_size)
     total_steps = (p.n_epochs + p.n_epochs_sofar) * steps
     warmup_steps = p.warmup_steps
 
-    print(f"total steps: {total_steps}\nwarmup steps: {warmup_steps}")
+    print(f"Optimizer init:\n\ttotal steps: {total_steps}\n\twarmup steps: {warmup_steps}")
 
     def lr_lambda(current_step: int):
         if current_step < warmup_steps:
@@ -116,13 +116,12 @@ def init_adam(model: TransNovo):
 
 def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interruptHandler: InterruptHandler, scheduler: Optional[LambdaLR] = None):
     rm_idx = 0
-    lr = 0
     p = model.hyper_params
+    lr = optimizer.param_groups[0]['lr']
 
     start_epoch = p.n_epochs_sofar
-    end_epochs = p.n_epochs_sofar + p.n_epochs
-    ranger = tqdm(range(end_epochs), desc="Epochs")
-    ranger.update(start_epoch)
+    end_epoch = p.n_epochs
+    ranger = tqdm(range(start_epoch, end_epoch), initial=start_epoch, total=end_epoch, desc="Epochs")
 
     s_time = time.time()
     # TODO: Find a proper place for it
@@ -140,7 +139,7 @@ def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interrup
         test_result_matrix[rm_idx] = training.test_step(model, loss_fn, test_dl, interruptHandler)
         # Update learning rate
         lr = optimizer.param_groups[0]['lr']
-        p.learning_rate = lr
+        p.last_learning_rate = lr
 
         # calculate batch loss
         train_epoch_loss_tensor = train_result_matrix[rm_idx, :, 0]
@@ -158,8 +157,8 @@ def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interrup
         te_a = test_epoch_acc_tensor[test_epoch_acc_tensor != 0].mean().item()
 
         if epoch % view_rate == 0:
-            t = "\n\tEpoch |   lr   | train loss | train acc | train norms mean | test loss | test acc"
-            t += f"\n\t{epoch:>6}|{lr:>6.6f}|{tr_l:>12.6f}|{tr_a:>11.6f}|{tr_epoch_grads:>18.6f}|{te_l:>11.6f}|{te_a:>10.6f}\n"
+            t = "\n\tEpoch |    lr    | train loss | train acc | train norms mean | test loss | test acc"
+            t += f"\n\t{epoch:>6}|{lr:>8.8f}|{tr_l:>12.6f}|{tr_a:>11.6f}|{tr_epoch_grads:>18.6f}|{te_l:>11.6f}|{te_a:>10.6f}\n"
             print(t)
 
         # TODO: Save after evey N iterations

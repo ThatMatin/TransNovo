@@ -137,7 +137,7 @@ class Decoder(nn.Module):
         
 
 class TransNovo(nn.Module):
-    def __init__(self, params: Parameters):
+    def __init__(self, params: Parameters, load: bool=True):
         super().__init__()
         self.peptide_emb = PeptideEmbedding(params.d_model, device=params.device)
         self.spectrum_emb = SpectrumEmbedding(params.d_model)
@@ -148,10 +148,14 @@ class TransNovo(nn.Module):
                                               params.d_val, params.n_heads, params.dropout_rate)
                                       for _ in range(params.n_layers)])
         self.ll = nn.Linear(params.d_model, get_vocab_size())
-        nn.init.xavier_uniform_(self.ll.weight)
-        nn.init.zeros_(self.ll.bias)
         self.N_named_parameters = None
         self.hyper_params = params
+
+        nn.init.xavier_uniform_(self.ll.weight)
+        nn.init.zeros_(self.ll.bias)
+
+        if load:
+            self.load_if_file_exists()
         self.introduce()
 
     def forward(self, X, Y: torch.Tensor):
@@ -225,14 +229,16 @@ class TransNovo(nn.Module):
 
     def introduce(self):
         p = self.hyper_params
-        t = "\n>>>>>>>>>>>>>>>>> TransNovo <<<<<<<<<<<<<<<<<<<"
-        t += f"\nd_model: {p.d_model}\nn_heads: {p.n_heads}\nn_layers: {p.n_layers}\nlr: {p.learning_rate}"
+        t = "\n>>>>>>>>>>>>>>>> TransNovo <<<<<<<<<<<<<<<<"
+        t += f"\nd_model: {p.d_model}\nn_heads: {p.n_heads}\nn_layers: {p.n_layers}\n"
+        t += f"last lr: {p.last_learning_rate}\nnew lr: {p.new_learning_rate}"
         t += f"\nd_key=d_val=d_query: {p.d_key}\nd_ff: {p.d_ff}\ndropout: {p.dropout_rate}"
         t += f"\nLen X: {p.max_spectrum_length}\nLen Y: {p.max_peptide_length}"
         t += f"\nModel parameters: {self.total_param_count()}"
         t += f"\nNum data points: {p.data_point_count}\noptim: Adam"
         t += f"\nBatch size: {p.batch_size}"
-        t += f"\nEpochs so far: {p.n_epochs_sofar}\nEpochs this round: {p.n_epochs}"
+        t += f"\nEpochs so far: {p.n_epochs_sofar}\nEpochs total: {p.n_epochs}"
+        t += "\n<<<<<<<<<<<<<<<< ********* >>>>>>>>>>>>>>>>"
         print(t)
 
     # TODO: create and update Metrics Matrix
@@ -254,9 +260,16 @@ class TransNovo(nn.Module):
         if model_path is None:
             model_path = self.hyper_params.model_save_path()
         checkpoint = torch.load(model_path)
-        self.hyper_params(checkpoint.get(MODEL_HYPERPARAMETERS, {}))
+        params = checkpoint.get(MODEL_HYPERPARAMETERS, {})
+        params["n_epochs"] = self.hyper_params.n_epochs
+        if self.hyper_params.new_learning_rate == 0:
+            params["new_learning_rate"] = self.hyper_params.last_learning_rate
+        else:
+            params["new_learning_rate"] = self.hyper_params.new_learning_rate
+
+        self.hyper_params(params)
         self.load_state_dict(checkpoint[MODEL_STATE_DICT])
-        self.introduce()
+        print(f"TN> loaded model from: {model_path}")
 
 
     def view_grad_norms(self):

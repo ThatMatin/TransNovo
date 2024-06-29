@@ -55,6 +55,13 @@ class MSPManager(Dataset):
             max_y = max(max_y, file_max_y)
         return max_x, max_y
 
+    def current_x_y_max(self):
+        """
+        returns (max_x, max_y)
+        """
+        assert isinstance(self.X, torch.Tensor)
+        assert isinstance(self.Y, torch.Tensor)
+        return self.X.size(1), self.Y.size(1)
 
     def read_files(self, files: List[os.PathLike], batch_size: int,
                    x_len: int, y_len: int) -> Tuple[torch.Tensor, torch.Tensor]:

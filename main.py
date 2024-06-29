@@ -9,13 +9,13 @@ from modules import TransNovo
 
 def main():
     p = Parameters(
-            d_model=256,
-            n_layers=3,
-            d_ff=1024,
-            batch_size=128,
-            max_file_size=30,
-            lr=1e-5,
-            n_epochs=100,
+            d_model=32,
+            n_layers=1,
+            d_ff=128,
+            batch_size=256,
+            max_file_size=10,
+            # lr=5e-4,
+            n_epochs=70,
             )
 
     # Data preparation
@@ -28,14 +28,12 @@ def main():
 
     # Update data stats
     p.data_point_count = len(data)
+    p.max_spectrum_length, p.max_peptide_length = data.current_x_y_max()
 
     # Create model
     model = TransNovo(p)
     model.load_if_file_exists()
-    p = model.hyper_params
-    p.n_epochs = 1000
-    p.learning_rate = 5e-4
-    model.to(p.device)
+    model.to(model.hyper_params.device)
 
     # loss, optimizer, scheduler, interrupt
     optimizer, scheduler = training.init_adam(model)

@@ -1,9 +1,6 @@
 from typing import Optional
 import torch
 
-def lr_func(step, d_model, warmup_steps) -> float:
-    return d_model**-0.5 * min(step**-0.5, warmup_steps**-1.5)
-
 class Parameters:
     """
     ! d_model // n_heads
@@ -20,7 +17,7 @@ class Parameters:
                  d_ff: int = 512,
                  dropout_rate: float = 0.1,
                  max_file_size: float = 10,
-                 lr: float = 1e-5,
+                 lr: float = 0.0,
                  device=None):
 
         self.n_epochs = n_epochs
@@ -60,12 +57,12 @@ class Parameters:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device
 
-        # NOTE: Beacuse of pickle's issues with local functions we can't create closures with set d_model and warmup_steps. So we have to pass them to learning_rate func every time
-        self.learning_rate = lr
+        self.last_learning_rate = 0
+        self.new_learning_rate = lr
 
     def model_save_path(self):
         f = f"D{self.d_model}N{self.n_layers}H{self.n_heads}FF{self.d_ff}DO{int(10*self.dropout_rate)}"
-        f += f"X{self.max_spectrum_length}Y{self.max_peptide_length}.pth"
+        f += f"B{self.batch_size}X{self.max_spectrum_length}Y{self.max_peptide_length}.pth"
         return f
 
 
