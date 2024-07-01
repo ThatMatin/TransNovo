@@ -7,3 +7,6 @@ train_jukit.py
 
 *.pth
 *.tensor
+
+*.png
+*.jpg

@@ -7,6 +7,7 @@ from .embedding import PeptideEmbedding, SpectrumEmbedding
 from .parameters import Parameters
 from tokenizer import get_vocab_size
 from tokenizer.aa import END_TOKEN, PAD_TOKEN, mass_tensor
+import matplotlib.pyplot as plt
 
 MODEL_STATE_DICT = "model_state_dict"
 MODEL_HYPERPARAMETERS = "hyper_params"
@@ -270,6 +271,32 @@ class TransNovo(nn.Module):
         self.hyper_params(params)
         self.load_state_dict(checkpoint[MODEL_STATE_DICT])
         print(f"TN> loaded model from: {model_path}")
+
+    def plot_loss_n_grad(self, train_loss_offset: int=0,
+                         test_loss_offset: int=0,
+                         figsize=(60, 30)):
+        test_rm = self.hyper_params.test_result_matrix
+        train_rm = self.hyper_params.train_result_matrix
+
+        plt.figure(figsize=figsize)
+        plt.subplot(2, 2, 1)
+        plt.plot(torch.flatten(train_rm[:, :, 0])[train_loss_offset:].to('cpu'))
+        plt.title("train loss")
+
+        plt.subplot(2, 2, 2)
+        plt.plot(torch.flatten(test_rm[:, :, 0])[test_loss_offset:].to('cpu'))
+        plt.title("test loss")
+
+        plt.subplot(2, 2, 3)
+        plt.plot(torch.flatten(torch.log10(train_rm[:, :, 2])).to('cpu'))
+        plt.title("train gradient norms")
+
+        plt.subplot(2, 2, 4)
+        plt.plot(torch.flatten(train_rm[:, :, 1]).to('cpu'))
+        plt.title("train acc")
+
+        plt.savefig("plots.png")
+        plt.close()
 
 
     def view_grad_norms(self):
