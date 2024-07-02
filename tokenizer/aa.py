@@ -1,7 +1,7 @@
 import csv
 import torch
 import tokenizer.molecules as M
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 
 PAD_TOKEN = 0
@@ -104,7 +104,34 @@ def _read_amino_acids_table(file_path) -> Dict:
     data_dict = {}
     with open(file_path, mode='r', encoding='utf-8-sig') as csv_file:
         csv_reader = csv.DictReader(csv_file, delimiter='\t')
+        assert isinstance(csv_reader.fieldnames, Sequence)
         for row in csv_reader:
             key = row[csv_reader.fieldnames[0]]
             data_dict[key] = row
     return data_dict
+
+def modifications_to_lower(peptide_sequence, modifications):
+    peptide_list = list(peptide_sequence)
+
+    for pos, aa, mod in modifications:
+        if mod == 'CAM' and aa == 'C':
+            peptide_list[pos] = 'c'
+        elif mod == 'Oxidation' and aa == 'M':
+            peptide_list[pos] = 'm'
+
+    return ''.join(peptide_list)
+
+def lower_to_modifications(peptide_sequence):
+    modifications = []
+
+    peptide_list = list(peptide_sequence)
+
+    for i, aa in enumerate(peptide_list):
+        if aa == 'c':
+            modifications.append((i, 'C', 'CAM'))
+            peptide_list[i] = 'C'
+        elif aa == 'm':
+            modifications.append((i, 'M', 'Oxidation'))
+            peptide_list[i] = 'M'
+
+    return ''.join(peptide_list), modifications

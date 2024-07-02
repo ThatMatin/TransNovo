@@ -59,6 +59,7 @@ class MultiHeadAttention(nn.Module):
         self.heads = nn.ModuleList([AttentionHead(d_model, d_key, d_val, dropout, is_masked) for _ in range(n_heads)])
         self.proj = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
+        nn.init.xavier_uniform_(self.proj.weight)
 
     def forward(self, k: torch.Tensor, v: torch.Tensor, q: torch.Tensor, pad_mask=None):
         out = torch.concat([head(k, v, q, pad_mask=pad_mask) for head in self.heads], dim=-1)
