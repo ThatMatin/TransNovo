@@ -16,7 +16,7 @@ class Parameters:
                  batch_size: int = 32,
                  d_ff: int = 512,
                  dropout_rate: float = 0.1,
-                 max_file_size: float = 10,
+                 max_file_size: float = 0,
                  lr: float = 0.0,
                  device=None):
 
@@ -35,8 +35,8 @@ class Parameters:
         self.dropout_rate = dropout_rate
 
         # train data
-        self.max_spectrum_length = 250
-        self.max_peptide_length = 100
+        self.max_spectrum_length = 0
+        self.max_peptide_length = 0
         self.data_point_count = 0
 
         # optimizer

@@ -23,10 +23,10 @@ def train_step(model: nn.Module,
     result_matrix = torch.zeros((len(train_dl), 3))
 
     model.train()
-    for i, (X,Y) in tqdm(enumerate(train_dl),
+    for i, (X,Y,Ch,P) in tqdm(enumerate(train_dl),
                          total=len(train_dl),
                          desc="over training set"):
-        logits = model(X, Y)
+        logits = model(X, Y, Ch, P)
 
         # NOTE: For intensities with large values this returns nan
         # one fix is to discretize
@@ -66,10 +66,10 @@ def test_step(model: nn.Module,
         result_matrix = torch.zeros((len(test_dl), 2))
         model.eval()
 
-        for i, (X,Y) in tqdm(enumerate(test_dl),
+        for i, (X,Y, Ch, P) in tqdm(enumerate(test_dl),
                              total=len(test_dl),
                              desc="over test set"):
-            logits = model(X, Y)
+            logits = model(X, Y, Ch, P)
 
             tgt_output = Y[:, 1:]
             logits_flat = logits.transpose(-2, -1)

@@ -3,7 +3,7 @@ import data as D
 
 def create_msp_tensor():
     # in MB
-    max_file_size = 40
+    max_file_size = 0
     batch_size = 100000
     data_dir = "datafiles"
     discretize = False

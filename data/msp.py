@@ -53,8 +53,9 @@ class MSPManager(Dataset):
         max_x = 0
         max_y = 0
         for f in files_list:
-            print(f"inspecting max sizes: {f}")
+            print(f"(MSP) inspecting max sizes: {f}")
             file_max_x, file_max_y = self.__get_x_y_max_len_for_file(f)
+            print(f"(MSP) max_x: {file_max_x}, max_y: {file_max_y} | {f}")
             max_x = max(max_x, file_max_x)
             max_y = max(max_y, file_max_y)
         return max_x, max_y
@@ -90,7 +91,7 @@ class MSPManager(Dataset):
                       x_len: int, y_len: int):
 
         if file in self.consumed_files:
-            print(f"file {file} has been already consumed.")
+            print(f"(MSP) file {file} has been already consumed.")
             return
 
         if self.__is_any_tensor_none():
@@ -106,7 +107,7 @@ class MSPManager(Dataset):
             raise IndexError("width of data is larger than max")
 
         with self.__msp_file_context(file) as handle:
-            print(f"parsing {file} to tensor...")
+            print(f"(MSP) parsing {file} to tensor...")
             pos = 0
             while True:
                 x_tensor, y_tensor, ch_tensor, p_tensor, pos, count = self.get_batch_n_encode(handle, pos, batch_size, x_len, y_len)
@@ -133,7 +134,7 @@ class MSPManager(Dataset):
     def __init_empty_tesnors(self, x_len: int, y_len: int):
         self.X = torch.empty((0, x_len, 2))
         self.Y = torch.empty((0, y_len), dtype=torch.int64)
-        self.Ch = torch.empty((0), dtype=torch.uint8)
+        self.Ch = torch.empty((0), dtype=torch.int64)
         self.P = torch.empty((0))
 
 
@@ -148,9 +149,9 @@ class MSPManager(Dataset):
                           "files": self.consumed_files,
                           "is_discretized": self.is_discretized}
             torch.save(checkpoint, save_path)
-            print(f"Dataset saved to {save_path}.")
+            print(f"(MSP) Dataset saved to {save_path}.")
         else:
-            print("No dataset to save.")
+            print("(MSP) No dataset to save.")
 
 
     def load(self, data_path: os.PathLike):
@@ -168,10 +169,10 @@ class MSPManager(Dataset):
             assert isinstance(self.Y, torch.Tensor)
             assert isinstance(self.Ch, torch.Tensor)
             assert isinstance(self.P, torch.Tensor)
-            print(f"Dataset loaded from {data_path}.")
+            print(f"(MSP) Dataset loaded from {data_path}.")
 
         except FileNotFoundError:
-            print(f"No dataset found at {data_path}. Initialized empty dataset.")
+            print(f"(MSP) No dataset found at {data_path}. Initialized empty dataset.")
 
 
     def to(self, device:torch.device|str):
@@ -202,7 +203,7 @@ class MSPManager(Dataset):
         for p in Path(files_dir).glob("*.msp.tar.gz"):
             if max_file_size > 0 and os.path.getsize(p)*1e-6 > max_file_size:
                 continue
-            print(f"size: {os.path.getsize(p)*1e-6:4.2f} | {p}")
+            print(f"(MSP) size: {os.path.getsize(p)*1e-6:4.2f} | {p}")
             files.append(p)
         return files
 
@@ -218,7 +219,7 @@ class MSPManager(Dataset):
 
         x_tensor = torch.zeros((batch_size, max_x, 2))
         y_tensor = torch.zeros((batch_size, max_y), dtype=torch.int64)
-        ch_tensor = torch.zeros(batch_size, dtype=torch.uint8)
+        ch_tensor = torch.zeros(batch_size, dtype=torch.int64)
         p_tensor = torch.zeros(batch_size)
 
         batch_counter = -1 # for proper indexing

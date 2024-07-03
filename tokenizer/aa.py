@@ -5,11 +5,11 @@ from typing import Dict, List, Sequence, Tuple
 
 
 PAD_TOKEN = 0
-PAD_TOKEN_STR = "-"
+PAD_TOKEN_STR = " "
 START_TOKEN = 1
-START_TOKEN_STR = "="
+START_TOKEN_STR = ">"
 END_TOKEN = 2
-END_TOKEN_STR = "!"
+END_TOKEN_STR = "<"
 Amino_Acids_File = "tokenizer/amino_acids.csv"
 AAtoI = None
 ItoAA = None

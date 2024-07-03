@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
-from .embedding import PeptideEmbedding, SpectrumEmbedding
+from .embedding import PeptidePrecursorEmbedding, SpectrumEmbedding
 from .parameters import Parameters
 from tokenizer import get_vocab_size
 from tokenizer.aa import END_TOKEN, PAD_TOKEN, mass_tensor
@@ -141,8 +141,8 @@ class Decoder(nn.Module):
 class TransNovo(nn.Module):
     def __init__(self, params: Parameters, load: bool=True):
         super().__init__()
-        self.peptide_emb = PeptideEmbedding(params.d_model, device=params.device)
         self.spectrum_emb = SpectrumEmbedding(params.d_model)
+        self.peptide_precursor_emb = PeptidePrecursorEmbedding(params.d_model, self.spectrum_emb.pos_emb, device=params.device)
         self.encoders = nn.ModuleList([Encoder(params.d_model, params.d_ff, params.d_key,
                                               params.d_val, params.n_heads, params.dropout_rate)
                                       for _ in range(params.n_layers)])
@@ -160,16 +160,15 @@ class TransNovo(nn.Module):
             self.load_if_file_exists()
         self.introduce()
 
-    def forward(self, X, Y: torch.Tensor):
+    def forward(self, X:torch.Tensor, Y: torch.Tensor, charge: torch.Tensor, parent_mz: torch.Tensor):
         Y_input = Y[:, :-1]
         X_mask, Y_mask = self.get_padding_masks(X, Y_input)
-        Y_input = mass_tensor(Y_input)
 
         enc_out = self.spectrum_emb(X)
         for enc in self.encoders:
             enc_out = enc(enc_out, pad_mask=X_mask)
 
-        dec_out = self.peptide_emb(Y_input)
+        dec_out = self.peptide_precursor_emb(Y_input, charge, parent_mz)
         for dec in self.decoders:
             dec_out = dec(dec_out, enc_out, pad_mask=Y_mask)
 
@@ -194,13 +193,12 @@ class TransNovo(nn.Module):
             Y = torch.ones((batch_size , 1), device=self.hyper_params.device, dtype=torch.int64)
             while True:
                 X_mask, _ = self.get_padding_masks(X, Y)
-                Y_input = mass_tensor(Y)
 
                 enc_out = self.spectrum_emb(X)
                 for enc in self.encoders:
                     enc_out = enc(enc_out, pad_mask=X_mask)
 
-                dec_out = self.peptide_emb(Y_input)
+                dec_out = self.peptide_precursor_emb(Y)
                 for dec in self.decoders:
                     dec_out = dec(dec_out, enc_out)
 
