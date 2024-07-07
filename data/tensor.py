@@ -1,10 +1,10 @@
+from typing import Tuple
 import torch
 import os
-from typing import Tuple
-
 from logger import setup_logger
 
 logger = setup_logger(__name__)
+T = torch.Tensor
 
 class TensorBatch():
     def __init__(self, N: int, maxes:Tuple[int, int]):
@@ -37,5 +37,22 @@ class TensorBatch():
         torch.save(checkpoint, filename)
         logger.debug(f"saved {self.X.size(0)} spectra to {filename}")
 
+    def load_file(self, filename: os.PathLike):
+        checkpoint = torch.load(filename)
+        self.X = checkpoint["X"]
+        self.Y = checkpoint["Y"]
+        self.Ch = checkpoint["Ch"]
+        self.P = checkpoint["P"]
+        logger.debug(f"loaded from {filename} - N: {self.X.size(0)} - maxes: ({self.X.size(1)}, {self.Y.size(1)})")
 
+    def get_batch_size(self) -> int:
+        assert self.X.size(0) == self.Y.size(0) == self.Ch.size(0) == self.P.size(0)
+        return self.X.size(0)
 
+    def __getitem__(self, index) -> Tuple[T, T, T, T]:
+        if isinstance(index, slice):
+            return self.X[index.start:index.stop], self.Y[index.start:index.stop], \
+                    self.Ch[index.start:index.stop], self.P[index.start:index.stop]
+
+        else:
+            return self.X[index], self.Y[index], self.Ch[index], self.P[index]

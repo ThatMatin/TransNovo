@@ -4,6 +4,7 @@ import torch
 import unittest, logging
 from pathlib import Path
 from data.splitter import DataManifest, FileManager, MSPSplitDataset
+from interrupt import InterruptHandler
 
 class FileManagerTest(unittest.TestCase):
     def setUp(self):
@@ -166,7 +167,8 @@ class MSPSplitDatasetTest(unittest.TestCase):
     def setUp(self):
         logger = logging.getLogger()
         logger.setLevel(logging.DEBUG)
-        self.msp = MSPSplitDataset(Path("data/test_data"))
+        inter = InterruptHandler()
+        self.msp = MSPSplitDataset(Path("data/test_data"), inter)
         self.msp.manifest.set_non_defualt_manifest_file_name("msp.manifest.test")
         self.msp.set_base_tensor_file_name("msp.tensor.test")
 

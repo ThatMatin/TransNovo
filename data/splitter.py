@@ -11,7 +11,6 @@ from typing import Generator, List, Optional, Tuple
 from torch.types import Number
 from torch.utils.data import Dataset
 from contextlib import contextmanager
-from concurrent.futures import ThreadPoolExecutor
 from tqdm.auto import tqdm
 
 logger = setup_logger(__name__)
@@ -259,7 +258,7 @@ class FileManager:
     def get_size(self, id: int):
         return self.sizes[id]
 
-    def __call__(self):
+    def __call__(self) -> Generator[Tuple[int, Path], None, None]:
         for f in self.files:
             yield f
 

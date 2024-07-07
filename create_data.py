@@ -1,4 +1,3 @@
-import threading
 import data as D
 from pathlib import Path
 
@@ -6,7 +5,7 @@ from interrupt import InterruptHandler
 
 
 def create_msp_tensor():
-    file_size_mb = 500
+    file_size_mb = 1000
     data_path = Path("datafiles")
 
     interrupt = InterruptHandler()
