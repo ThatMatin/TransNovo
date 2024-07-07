@@ -1,15 +1,17 @@
+import threading
 import data as D
+from pathlib import Path
+
+from interrupt import InterruptHandler
 
 
 def create_msp_tensor():
-    # in MB
-    max_file_size = 0
-    batch_size = 100000
-    data_dir = "datafiles"
-    discretize = False
+    file_size_mb = 500
+    data_path = Path("datafiles")
 
-    data = D.MSPManager()
-    data.auto_create(data_dir, batch_size, max_file_size, discretize)
+    interrupt = InterruptHandler()
+    data = D.MSPSplitDataset(data_path, interrupt)
+    data.auto(file_size_mb)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,7 @@
 import signal
+from logger import setup_logger
+
+logger = setup_logger(__name__)
 
 class InterruptHandler:
     def __init__(self):
@@ -7,8 +10,8 @@ class InterruptHandler:
         signal.signal(signal.SIGTERM, self.handle_signal)
 
     def handle_signal(self, signum, frame):
-        print("Okay, Okay, let me clean up after this training loop ends...")
+        logger.debug("request to interrupt")
         self.__interrupted = True
 
-    def is_interrupted(self):
+    def is_interrupted(self) -> bool:
         return self.__interrupted
