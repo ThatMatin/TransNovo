@@ -3,7 +3,7 @@ import torch
 import threading
 from pathlib import Path
 from typing import Tuple, Generator
-from data.splitter import DataManifest, FileManager
+from data.splitter import FileManager
 from data.tensor import TensorBatch
 from logger import setup_logger
 
@@ -11,7 +11,7 @@ T = torch.Tensor
 logger = setup_logger(__name__)
 
 class AsyncDataset:
-    def __init__(self, path: Path, train_batch_size: int, queue_size: int=500):
+    def __init__(self, path: Path, train_batch_size: int, device="cuda", queue_size: int=500):
         self.threads = list()
         self.files = FileManager()
         self.path = path
@@ -20,6 +20,7 @@ class AsyncDataset:
         self.queue = queue.Queue(queue_size)
         self.__stop_event = threading.Event()
         self.thread = threading.Thread(target=self.load_data)
+        self.device = device
 
         self.inspect_files(path)
         self.thread.start()
@@ -34,6 +35,7 @@ class AsyncDataset:
         try:
             for _, file in self.files():
                 tensors = self.load_file(file)
+                tensors.to(self.device)
                 steps = int(tensors.get_batch_size()/self.train_batch_size)
                 for i in range(steps):
                     start = i * self.train_batch_size
@@ -70,6 +72,9 @@ class AsyncDataset:
             yield batch
 
         self.stop()
+
+    def __iter__(self):
+        return iter(self.__call__())
 
     def __len__(self) -> int:
         total_batches = 0

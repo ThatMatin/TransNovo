@@ -1,8 +1,8 @@
+from pathlib import Path
 import data as D
 import training
 from modules.parameters import Parameters
 from torch.nn import CrossEntropyLoss
-from data.split import get_train_test_dataloaders
 from interrupt import InterruptHandler
 from modules import TransNovo
 
@@ -19,16 +19,13 @@ def main():
             )
 
     # Data preparation
-    data = D.MSPManager()
-    data.auto_create(p.data_path,
-                     batch_size=100000,
-                     size_limit=p.max_file_size,
-                     is_discretized=False)
-    data.to(p.device)
+    train_dl = D.AsyncDataset(Path("datafiles/train"), p.batch_size, p.device)
+    test_dl = D.AsyncDataset(Path("datafiles/test"), p.batch_size, p.device)
 
     # Update data stats
-    p.data_point_count = len(data)
-    p.max_spectrum_length, p.max_peptide_length = data.current_x_y_max()
+    manifest = D.DataManifest(Path("datafiles"))
+    p.data_point_count = manifest.total_spectra()
+    p.max_spectrum_length, p.max_peptide_length = manifest.maxes
 
     # Create model
     model = TransNovo(p)
@@ -40,14 +37,14 @@ def main():
     interrup_handler = InterruptHandler()
     loss_fn = CrossEntropyLoss()
 
-    # train
-    train_dl, test_dl = get_train_test_dataloaders(data,
-                                                   p.batch_size,
-                                                   p.train_test_split,
-                                                   True)
-    training.train_loop(model,
-                     optimizer,loss_fn,train_dl,
-                     test_dl,interrup_handler, scheduler)
+    try:
+        # train
+        training.train_loop(model,
+                         optimizer,loss_fn,train_dl,
+                         test_dl,interrup_handler, scheduler)
+    finally:
+        train_dl.stop()
+        test_dl.stop()
 
 
 if __name__ == "__main__":

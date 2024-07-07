@@ -144,41 +144,6 @@ class DataManifest():
         for pos in self.positions[file_id]:
             yield pos
 
-
-    def batch_indices_generator(self, batch_size: int) -> Generator[List[int], None, None]:
-        """
-        returns a generator that iterates over the range of total data
-        and each time returns a list of randomly selected ids from that
-        range without replacement, until all ids are returned
-        """
-        total = self.total_spectra()
-        ids = [i for i in range(total)]
-        random.shuffle(ids)
-        batch = min(batch_size, len(ids)) 
-        while len(ids) != 0:
-            yield ids[-batch:]
-            del ids[-batch:]
-            batch = min(batch_size, len(ids)) 
-
-
-    def file_positions_generator(self, ids: List[int]):
-        """
-        for each data file (starting from zero) given the indices (which
-        are the ids of data in the total range of data point) in ids,
-        returns a list of tuples: 
-            [ (pos_in_file, index_of_pos_in_ids),... ,(...)]
-        """
-        original_ids = ids.copy()
-        ids.sort()
-        start = 0
-        for i in range(len(self.data_files)):
-            n_data_in_file = len(self.positions[i])
-            positions = self.positions[i]
-            p_i = [(positions[i - start], original_ids.index(i)) for i in ids if start <= i < start + n_data_in_file]
-
-            start += n_data_in_file
-            yield p_i
-
     
     @contextmanager
     def msp_tar_gz_file_ctx(self, file: os.PathLike) -> Generator[io.TextIOWrapper, None, None]:

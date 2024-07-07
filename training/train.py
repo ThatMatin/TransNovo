@@ -7,6 +7,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils import data
 from tqdm.auto import tqdm
 
+from data.async_dataset import AsyncDataset
 import training
 from interrupt import InterruptHandler
 from modules.transformer import TransNovo
@@ -16,14 +17,14 @@ from training import mean_batch_acc
 def train_step(model: nn.Module,
                optimizer: torch.optim.Optimizer,
                loss_fn: nn.Module,
-               train_dl: data.DataLoader,
+               train_dl: AsyncDataset,
                scheduler: Optional[LambdaLR],
                interruptHandler: InterruptHandler):
 
     result_matrix = torch.zeros((len(train_dl), 3))
 
     model.train()
-    for i, (X,Y,Ch,P) in tqdm(enumerate(train_dl),
+    for i, (X,Y,Ch,P) in tqdm(enumerate(train_dl()),
                          total=len(train_dl),
                          desc="over training set"):
         logits = model(X, Y, Ch, P)

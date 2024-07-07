@@ -1,6 +1,6 @@
-from typing import Tuple
 import torch
 import os
+from typing import Tuple
 from logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -48,6 +48,12 @@ class TensorBatch():
     def get_batch_size(self) -> int:
         assert self.X.size(0) == self.Y.size(0) == self.Ch.size(0) == self.P.size(0)
         return self.X.size(0)
+
+    def to(self, device:torch.device|str):
+        self.X = self.X.to(device)
+        self.Y = self.Y.to(device)
+        self.Ch = self.Ch.to(device)
+        self.P = self.P.to(device)
 
     def __getitem__(self, index) -> Tuple[T, T, T, T]:
         if isinstance(index, slice):
