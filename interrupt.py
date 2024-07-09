@@ -11,7 +11,7 @@ class InterruptHandler:
         self.funcs = funcs
 
     def handle_signal(self, signum, frame):
-        logger.debug("request to interrupt")
+        logger.debug("request to interrupt, wait for gracious shutdown")
         self.__interrupted = True
         for f in self.funcs:
             f()

@@ -14,7 +14,7 @@ logger = setup_logger(__name__)
 def main():
     p = Parameters(
             d_model=128,
-            n_layers=2,
+            n_layers=6,
             d_ff=512,
             batch_size=128,
             lr=5e-4,
@@ -22,15 +22,11 @@ def main():
             )
 
     # Data preparation
-    train_ds = D.AsyncDataset(Path("datafiles/200M/train"), p.batch_size, p.device, 10)
-    test_ds = D.AsyncDataset(Path("datafiles/200M/test"), p.batch_size, p.device, 10)
+    train_ds = D.AsyncDataset(Path("datafiles/200M/train"), p.batch_size, p.device, 200)
+    test_ds = D.AsyncDataset(Path("datafiles/200M/test"), p.batch_size, p.device, 200)
 
-    # NOTE: Used to remove the batch dimension added by dataloader
-    def custom_collate(batch):
-        X, Y, Ch, P = batch[0]
-        return X, Y, Ch, P
-    train_dl = DataLoader(train_ds, collate_fn=custom_collate)
-    test_dl = DataLoader(test_ds, collate_fn=custom_collate)
+    train_dl = DataLoader(train_ds, batch_size=p.batch_size)
+    test_dl = DataLoader(test_ds, batch_size=p.batch_size)
 
     # Update data stats
     manifest = D.DataManifest(Path("datafiles"))

@@ -44,15 +44,10 @@ class AsyncDataset(IterableDataset):
                     break
                 tensors = self.load_file(file)
                 tensors.to(self.device)
-                steps = int(tensors.get_batch_size()/self.train_batch_size)
-                for i in range(steps):
+                for i in range(tensors.get_batch_size()):
                     if self.__stop_event.is_set():
                         break
-                    start = i * self.train_batch_size
-                    end = (i + 1) * self.train_batch_size
-                    self.put(tensors[start:end])
-                remaining = tensors.get_batch_size() % self.train_batch_size
-                self.put(tensors[-remaining:])
+                    self.put(tensors[i])
 
         except Exception as e:
             logger.error(f"{traceback.format_exc()}\n{e}")
@@ -96,17 +91,11 @@ class AsyncDataset(IterableDataset):
         if self.__len:
             return self.__len
 
-        total_batches = 0
+        total = 0
         for _, file in self.files():
             tensors = self.load_file(file)
-            steps = int(tensors.get_batch_size()/self.train_batch_size)
-            if tensors.get_batch_size() % self.train_batch_size == 0:
-                last_batch = 0
-            else:
-                last_batch = 1
-            total_batches += steps + last_batch
-            
+            total += tensors.get_batch_size()
             del tensors
 
-        self.__len = total_batches
-        return total_batches
+        self.__len = total
+        return total

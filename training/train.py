@@ -6,7 +6,6 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils import data
 from tqdm.auto import tqdm
-from torch.cuda.amp import GradScaler, autocast
 
 import training
 from logger import setup_logger
@@ -21,7 +20,6 @@ def train_step(model: nn.Module,
                loss_fn: nn.Module,
                train_dl: data.DataLoader,
                scheduler: Optional[LambdaLR],
-               scaler: GradScaler,
                interruptHandler: InterruptHandler):
 
     result_matrix = torch.zeros((len(train_dl), 3))
@@ -30,31 +28,35 @@ def train_step(model: nn.Module,
     for i, (X,Y,Ch,P) in tqdm(enumerate(train_dl),
                          total=len(train_dl),
                          desc="over training set"):
-        if X is None:
-            return result_matrix
+        logits = model(X, Y, Ch, P)
+
+        # NOTE: For intensities with large values this returns nan
+        # one fix is to discretize
+        if torch.isnan(logits).any().item():
+            logger.debug("NAN logit")
+            del X, Y, Ch, P, logits
+            torch.cuda.empty_cache()
+            continue
 
         optimizer.zero_grad(True)
-        with autocast():
-            logits = model(X, Y, Ch, P)
 
-            # NOTE: For intensities with large values this returns nan
-            # one fix is to discretize
-            if torch.isnan(logits).any().item():
-                continue
+        tgt_output = Y[:, 1:]
+        logits_flat = logits.transpose(-2, -1)
 
-            loss = loss_fn(logits.transpose(-2, -1), Y[:, 1:])
+        loss = loss_fn(logits_flat, tgt_output)
 
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
+        loss.backward()
+        optimizer.step()
 
         if scheduler:
             scheduler.step()
 
-        result_matrix[i, 0] = loss.item()
-        result_matrix[i, 1] = mean_batch_acc(logits.detach(), Y[:, 1:].detach())
+        result_matrix[i, 0] = loss.detach()
+        result_matrix[i, 1] = mean_batch_acc(logits.detach(), tgt_output.detach())
         result_matrix[i, 2] = model.grad_norms_mean()
-
+        
+        del X, Y, Ch, P, loss, logits
+        torch.cuda.empty_cache()
         if interruptHandler.is_interrupted():
             break
 
@@ -74,15 +76,22 @@ def test_step(model: nn.Module,
         for i, (X,Y, Ch, P) in tqdm(enumerate(test_dl),
                              total=len(test_dl),
                              desc="over test set"):
-            if X is None:
-                return result_matrix
+            logits = model(X, Y, Ch, P)
+            if torch.isnan(logits).any().item():
+                logger.debug("NAN logit (test)")
+                del X, Y, Ch, P, logits
+                torch.cuda.empty_cache()
+                continue
 
-            with autocast():
-                logits = model(X, Y, Ch, P)
-                loss = loss_fn(logits.transpose(-2, -1), Y[:, 1:])
+            tgt_output = Y[:, 1:]
+            logits_flat = logits.transpose(-2, -1)
+            loss = loss_fn(logits_flat, tgt_output)
 
-            result_matrix[i, 0] = loss.item()
-            result_matrix[i, 1] = mean_batch_acc(logits, Y[:, 1:])
+            result_matrix[i, 0] = loss
+            result_matrix[i, 1] = mean_batch_acc(logits, tgt_output)
+
+            del X, Y, Ch, P
+            torch.cuda.empty_cache()
 
             if interruptHandler.is_interrupted():
                 break
@@ -124,7 +133,6 @@ def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interrup
     rm_idx = 0
     p = model.hyper_params
     lr = optimizer.param_groups[0]['lr']
-    scaler = GradScaler()
 
     start_epoch = p.n_epochs_sofar
     end_epoch = p.n_epochs
@@ -143,7 +151,7 @@ def train_loop(model: TransNovo, optimizer, loss_fn, train_dl, test_dl, interrup
 
         rm_idx = epoch - start_epoch
 
-        train_result_matrix[rm_idx] = training.train_step(model, optimizer, loss_fn, train_dl, scheduler, scaler, interruptHandler)
+        train_result_matrix[rm_idx] = training.train_step(model, optimizer, loss_fn, train_dl, scheduler, interruptHandler)
         test_result_matrix[rm_idx] = training.test_step(model, loss_fn, test_dl, interruptHandler)
         # Update learning rate
         lr = optimizer.param_groups[0]['lr']
