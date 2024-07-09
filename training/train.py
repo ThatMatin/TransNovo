@@ -8,7 +8,7 @@ from torch.utils import data
 from tqdm.auto import tqdm
 
 import training
-from logger import setup_logger
+from logger import log_memory, setup_logger
 from interrupt import InterruptHandler
 from modules.transformer import TransNovo
 from training import mean_batch_acc
@@ -42,8 +42,11 @@ def train_step(model: nn.Module,
 
         tgt_output = Y[:, 1:]
         logits_flat = logits.transpose(-2, -1)
-
         loss = loss_fn(logits_flat, tgt_output)
+
+        result_matrix[i, 1] = mean_batch_acc(logits.detach(), tgt_output.detach())
+        del logits, logits_flat, tgt_output
+        torch.cuda.empty_cache()
 
         loss.backward()
         optimizer.step()
@@ -52,10 +55,9 @@ def train_step(model: nn.Module,
             scheduler.step()
 
         result_matrix[i, 0] = loss.detach()
-        result_matrix[i, 1] = mean_batch_acc(logits.detach(), tgt_output.detach())
         result_matrix[i, 2] = model.grad_norms_mean()
         
-        del X, Y, Ch, P, loss, logits
+        del X, Y, Ch, P, loss
         torch.cuda.empty_cache()
         if interruptHandler.is_interrupted():
             break

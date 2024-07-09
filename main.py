@@ -14,9 +14,9 @@ logger = setup_logger(__name__)
 def main():
     p = Parameters(
             d_model=128,
-            n_layers=6,
+            n_layers=2,
             d_ff=512,
-            batch_size=128,
+            batch_size=32,
             lr=5e-4,
             n_epochs=70,
             )
