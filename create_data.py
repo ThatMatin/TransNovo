@@ -5,7 +5,7 @@ from interrupt import InterruptHandler
 
 
 def create_msp_tensor():
-    file_size_mb = 1000
+    file_size_mb = 200
     data_path = Path("datafiles")
 
     interrupt = InterruptHandler()

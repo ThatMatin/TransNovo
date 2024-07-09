@@ -89,7 +89,7 @@ class DataManifestTest(unittest.TestCase):
         self.dm.maxes = (10, 10)
         data_point_size = self.dm.data_point_size_bytes()
 
-        x_tensor = torch.ones((1, self.dm.maxes[0], 2), dtype=torch.float64)
+        x_tensor = torch.ones((1, self.dm.maxes[0], 2), dtype=torch.float32)
         y_tensor = torch.ones((1, self.dm.maxes[1]), dtype=torch.int64)
         p_or_ch_tensor = torch.ones((1, 1), dtype=torch.int64)
 

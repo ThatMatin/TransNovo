@@ -3,11 +3,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
+
+from logger import log_memory
 from .embedding import PeptidePrecursorEmbedding, SpectrumEmbedding
 from .parameters import Parameters
 from tokenizer import get_vocab_size
-from tokenizer.aa import END_TOKEN, PAD_TOKEN, mass_tensor
+from tokenizer.aa import END_TOKEN, PAD_TOKEN
 import matplotlib.pyplot as plt
+
+T = torch.Tensor
 
 MODEL_STATE_DICT = "model_state_dict"
 MODEL_HYPERPARAMETERS = "hyper_params"
@@ -20,29 +24,29 @@ class AttentionHead(nn.Module):
         self.value = nn.Linear(d_model, d_val, bias=False)
         self.dropout = nn.Dropout(dropout)
         # TODO: find a good place for it
-        # keep the dimensions large enough to cover max seq lenghth (200 here)
-        self.register_buffer("tril", torch.tril(torch.ones(200, 200)))
+        # keep the dimensions large enough to cover max seq lenghth (2000 here)
+        self.register_buffer("tril", torch.tril(torch.ones(2000, 2000)))
         self.is_masked = is_masked
         self._init_weights()
 
-    def forward(self, k: torch.Tensor, v: torch.Tensor, q: torch.Tensor,
-                pad_mask: Optional[torch.Tensor] = None):
+    def forward(self, k: T, v: T, q: T,
+                pad_mask: Optional[T] = None):
+        log_memory("enter att")
         _, T, C = q.shape
         K = self.key(k)
         V = self.value(v)
         Q = self.query(q)
 
         W = (Q @ K.transpose(-2, -1))/ C**0.5
+
         if self.is_masked:
             W = W.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
 
         if pad_mask is not None:
             W = W.masked_fill(pad_mask == 1, float('-inf'))
 
-        W = torch.softmax(W, dim=-1)
-        W = self.dropout(W)
-        out = W @ V
-        return out
+        W = self.dropout(W.softmax(dim=-1))
+        return W @ V
 
     def _init_weights(self):
         nn.init.xavier_uniform_(self.key.weight)
@@ -61,7 +65,7 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
         nn.init.xavier_uniform_(self.proj.weight)
 
-    def forward(self, k: torch.Tensor, v: torch.Tensor, q: torch.Tensor, pad_mask=None):
+    def forward(self, k: T, v: T, q: T, pad_mask=None):
         out = torch.concat([head(k, v, q, pad_mask=pad_mask) for head in self.heads], dim=-1)
         out = self.dropout(self.proj(out))
         return out
@@ -73,7 +77,7 @@ class AttentionBlock(nn.Module):
         self.MHA = MultiHeadAttention(d_model, d_key, d_val, n_heads, dropout, is_masked)
         self.ln = nn.LayerNorm(d_model)
 
-    def forward(self, k:torch.Tensor, v:torch.Tensor, q:torch.Tensor, pad_mask=None):
+    def forward(self, k:T, v:T, q:T, pad_mask=None):
         k = self.ln(k)
         v = self.ln(v)
         q = self.ln(q)
@@ -99,7 +103,7 @@ class FeedForward(nn.Module):
                 if layer.bias is not None:
                     nn.init.zeros_(layer.bias)
 
-    def forward(self, X:torch.Tensor):
+    def forward(self, X:T):
         out = self.net(X)
         return out
 
@@ -110,9 +114,8 @@ class FeedForwardBlock(nn.Module):
         self.ff = FeedForward(d_model, d_ff, dropout)
         self.ln = nn.LayerNorm(d_model)
 
-    def forward(self, X:torch.Tensor):
-        out = X + self.ff(self.ln(X))
-        return out
+    def forward(self, X:T):
+        return X + self.ff(self.ln(X))
 
 
 class Encoder(nn.Module):
@@ -134,8 +137,7 @@ class Decoder(nn.Module):
 
     def forward(self, dec_in, enc_out, pad_mask=None):
         at_out = self.masked_at(dec_in, dec_in, dec_in, pad_mask=pad_mask)
-        out = self.enc_dec_at(enc_out, enc_out, at_out)
-        return self.ff(out)
+        return self.ff(self.enc_dec_at(enc_out, enc_out, at_out))
         
 
 class TransNovo(nn.Module):
@@ -160,29 +162,31 @@ class TransNovo(nn.Module):
             self.load_if_file_exists()
         self.introduce()
 
-    def forward(self, X:torch.Tensor, Y: torch.Tensor, charge: torch.Tensor, parent_mz: torch.Tensor):
+    def forward(self, X:T, Y: T, charge: T, parent_mz: T):
         Y_input = Y[:, :-1]
         X_mask, Y_mask = self.get_padding_masks(X, Y_input)
 
         enc_out = self.spectrum_emb(X)
         for enc in self.encoders:
             enc_out = enc(enc_out, pad_mask=X_mask)
+            torch.cuda.empty_cache()
 
         dec_out = self.peptide_precursor_emb(Y_input, charge, parent_mz)
         for dec in self.decoders:
             dec_out = dec(dec_out, enc_out, pad_mask=Y_mask)
+            torch.cuda.empty_cache()
 
         return self.ll(dec_out)
 
 
-    def get_padding_masks(self, X, Y):
+    def get_padding_masks(self, X: T, Y: T):
         with torch.no_grad():
             is_padding = (X == torch.tensor([PAD_TOKEN, 0], device=self.hyper_params.device)).all(dim=2)
             to_bool = is_padding.int()
             X_mask = to_bool.unsqueeze(-1).expand(-1, -1, X.size(1))
             Y_mask = (Y == PAD_TOKEN).unsqueeze(-1).expand(-1, -1, Y.size(1)).int()
 
-        return X_mask.transpose(-2, -1), Y_mask.transpose(-2, -1)
+        return X_mask.transpose(-2, -1).detach(), Y_mask.transpose(-2, -1).detach()
 
 
     def generate(self, X):
@@ -215,8 +219,8 @@ class TransNovo(nn.Module):
             return Y
 
 
-    def finish_training(self, epoch: int, train_result_matrix: torch.Tensor,
-                        test_result_matrix: torch.Tensor, optimizer: torch.optim.Optimizer):
+    def finish_training(self, epoch: int, train_result_matrix: T,
+                        test_result_matrix: T, optimizer: torch.optim.Optimizer):
         trrm = train_result_matrix[:epoch]
         tsrm = test_result_matrix[:epoch]
         self.hyper_params.n_epochs_sofar += epoch
@@ -306,7 +310,7 @@ class TransNovo(nn.Module):
                 print(f"{n}: {p.grad.norm()}")
 
 
-    def grad_norms_mean(self) -> torch.Tensor:
+    def grad_norms_mean(self) -> T:
         if self.N_named_parameters is None:
             self.N_named_parameters = len(list(self.named_parameters()))
 
@@ -336,3 +340,17 @@ class TransNovo(nn.Module):
 
     def total_param_count(self) -> int:
         return sum([p.numel() for p in self.parameters()])
+
+    def get_model_size_mb(self) -> float:
+        """Calculate the total size of a PyTorch model in MB."""
+        total_size = 0
+
+        # Calculate the size of all parameters
+        for param in self.parameters():
+            total_size += param.nelement() * param.element_size()
+
+        # Calculate the size of all buffers
+        for buffer in self.buffers():
+            total_size += buffer.nelement() * buffer.element_size()
+
+        return total_size / 1024 ** 2

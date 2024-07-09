@@ -10,10 +10,10 @@ class TensorBatch():
     def __init__(self, N: int, maxes:Tuple[int, int]):
         max_x = maxes[0]
         max_y = maxes[1]
-        self.X = torch.zeros(N, max_x, 2, dtype=torch.float64)
+        self.X = torch.zeros(N, max_x, 2, dtype=torch.float32)
         self.Y = torch.zeros(N, max_y, dtype=torch.int64)
         self.Ch = torch.zeros(N, dtype=torch.int64)
-        self.P = torch.zeros(N, dtype=torch.float64)
+        self.P = torch.zeros(N, dtype=torch.float32)
 
     def update(self, batch_idx: int, x:torch.Tensor, y: torch.Tensor, ch: int, p: float):
         self.X[batch_idx] = x

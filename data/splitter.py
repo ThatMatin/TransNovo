@@ -160,9 +160,9 @@ class DataManifest():
         if self.maxes == (0, 0):
             self.inspect_maxes()
 
-        x_tensor_size = self.maxes[0] * 2 * 8 # 8 bytes for float64
-        y_tensor_size = self.maxes[1] * 8
-        total = x_tensor_size + y_tensor_size + 2 * 8 # (2 * 8) charge , parent mz * int64
+        x_tensor_size = self.maxes[0] * 2 * 4 # 4 bytes for float32
+        y_tensor_size = self.maxes[1] * 4
+        total = x_tensor_size + y_tensor_size + 2 * 8 # (2 * 8) charge and parent mz * int64
         return total
 
     def set_non_defualt_manifest_file_name(self, name:str):
@@ -301,7 +301,7 @@ class MSPSplitDataset(Dataset):
         max_x, max_y = self.manifest.maxes
         tensor = TensorBatch(batch_size, self.manifest.maxes)
 
-        x_tensor = torch.zeros(max_x, 2, dtype=torch.float64)
+        x_tensor = torch.zeros(max_x, 2, dtype=torch.float32)
         y_tensor = torch.empty(1)
         charge = -1
         parent_mz = 0
@@ -340,7 +340,7 @@ class MSPSplitDataset(Dataset):
 
                 batch_counter += 1
                 peak_counter = 0
-                x_tensor = torch.zeros(max_x, 2, dtype=torch.float64)
+                x_tensor = torch.zeros(max_x, 2, dtype=torch.float32)
                 y_tensor = torch.empty(1)
 
                 pep_seq, charge, modifications = self.extract_info_from_name(line, name_pattern, mod_pattern)

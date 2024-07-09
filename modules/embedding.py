@@ -8,20 +8,24 @@ from tokenizer.aa import get_vocab_size
 class MZPositionalEncoding(nn.Module):
     def __init__(self, d_model):
         super().__init__()
-        self.l_min = l_min = 0.001
-        l_max = 10000
-        len = int(l_max/l_min)
-        pe = torch.zeros(len, d_model)
-        position = torch.arange(0, len, dtype=torch.float).unsqueeze(1)
-        div_term = l_max/l_min * torch.exp(torch.arange(0, d_model, 2).float() * (-log(l_min/2 * pi) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
+        self.d_model = d_model
+        self.l_min = 0.001
+        self.l_max = 10000
+        self.div_term = self.l_max / self.l_min * torch.exp(
+            torch.arange(0, d_model, 2).float() * (-log(self.l_min / (2 * pi)) / d_model)
+        )
 
     def forward(self, x: torch.Tensor):
         # x: batch * T_x * mz
-        input = (x * 1/self.l_min).int()
-        return self.pe[input]
+        batch_size, seq_len = x.shape
+        input = (x * 1 / self.l_min).int().float().unsqueeze(-1)
+        
+        # Compute positional encodings on-the-fly
+        pe = torch.zeros(batch_size, seq_len, self.d_model, device=x.device)
+        pe[:, :, 0::2] = torch.sin(input * self.div_term.to(x.device))
+        pe[:, :, 1::2] = torch.cos(input * self.div_term.to(x.device))
+        
+        return pe
 
 
 class PositionalEncoding(nn.Module):
