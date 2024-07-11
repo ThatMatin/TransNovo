@@ -18,13 +18,13 @@ class MZPositionalEncoding(nn.Module):
     def forward(self, x: torch.Tensor):
         # x: batch * T_x * mz
         batch_size, seq_len = x.shape
-        input = (x * 1 / self.l_min).int().float().unsqueeze(-1)
+        input = torch.floor(x / self.l_min)
         
         # Compute positional encodings on-the-fly
-        pe = torch.zeros(batch_size, seq_len, self.d_model, device=x.device)
-        pe[:, :, 0::2] = torch.sin(input * self.div_term.to(x.device))
-        pe[:, :, 1::2] = torch.cos(input * self.div_term.to(x.device))
-        
+        pe = torch.zeros(batch_size, seq_len, self.d_model, device=x.device, dtype=x.dtype)
+        pe[:, :, 0::2] = torch.sin(input.unsqueeze(-1) * self.div_term.to(x.device))
+        pe[:, :, 1::2] = torch.cos(input.unsqueeze(-1) * self.div_term.to(x.device))
+        pe.requires_grad_(True)
         return pe
 
 
@@ -93,7 +93,9 @@ class SpectrumEmbedding(nn.Module):
         nn.init.zeros_(self.intensity_embedding.bias)
 
     def forward(self, x):
-        mz_out = self.pos_emb(x[:, :, 0])
-        int_out = self.intensity_embedding(x[:, :, 1].unsqueeze(-1))
+        mz_out = self.pos_emb(x[:, :, -1])
+        scaled_int = x[:, :, 1].unsqueeze(-1) / x.size(1) ** 2
+        int_out = self.intensity_embedding(scaled_int)
         out = mz_out + int_out
-        return self.ln(out)
+        out = self.ln(out)
+        return out

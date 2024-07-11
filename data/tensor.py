@@ -45,6 +45,10 @@ class TensorBatch():
         self.P = checkpoint["P"]
         logger.debug(f"loaded from {filename} - N: {self.X.size(0)} - maxes: ({self.X.size(1)}, {self.Y.size(1)})")
 
+    def set_requires_grad_true(self):
+        self.X.requires_grad_(True)
+        self.P.requires_grad_(True)
+
     def get_batch_size(self) -> int:
         assert self.X.size(0) == self.Y.size(0) == self.Ch.size(0) == self.P.size(0)
         return self.X.size(0)

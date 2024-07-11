@@ -4,6 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
 
+from torch.utils.checkpoint import checkpoint
+
 from logger import log_memory
 from .embedding import PeptidePrecursorEmbedding, SpectrumEmbedding
 from .parameters import Parameters
@@ -31,13 +33,13 @@ class AttentionHead(nn.Module):
 
     def forward(self, k: T, v: T, q: T,
                 pad_mask: Optional[T] = None):
-        log_memory("enter att")
         _, T, C = q.shape
         K = self.key(k)
         V = self.value(v)
         Q = self.query(q)
 
         W = (Q @ K.transpose(-2, -1))/ C**0.5
+        del Q, K
 
         if self.is_masked:
             W = W.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
@@ -45,7 +47,8 @@ class AttentionHead(nn.Module):
         if pad_mask is not None:
             W = W.masked_fill(pad_mask == 1, float('-inf'))
 
-        W = self.dropout(W.softmax(dim=-1))
+        W = checkpoint(W.softmax, -1, use_reentrant=True)
+        W = self.dropout(W)
         return W @ V
 
     def _init_weights(self):
@@ -67,7 +70,7 @@ class MultiHeadAttention(nn.Module):
 
     def forward(self, k: T, v: T, q: T, pad_mask=None):
         out = torch.concat([head(k, v, q, pad_mask=pad_mask) for head in self.heads], dim=-1)
-        out = self.dropout(self.proj(out))
+        out = self.dropout(checkpoint(self.proj, out, use_reentrant=True))
         return out
 
 
@@ -162,19 +165,25 @@ class TransNovo(nn.Module):
             self.load_if_file_exists()
         self.introduce()
 
-    def forward(self, X:T, Y: T, charge: T, parent_mz: T):
+ 
+    def enc_forward(self, X: T, X_mask: T) -> T:
+        enc_out = self.spectrum_emb(X)
+        for enc in self.encoders:
+            enc_out = enc(enc_out, X_mask)
+        return enc_out
+
+
+    def forward(self, X:T, Y: T, charge: T, parent_mz: T) -> T:
         Y_input = Y[:, :-1]
         X_mask, Y_mask = self.get_padding_masks(X, Y_input)
 
-        enc_out = self.spectrum_emb(X)
-        for enc in self.encoders:
-            enc_out = enc(enc_out, pad_mask=X_mask)
-            torch.cuda.empty_cache()
+        enc_out = checkpoint(self.enc_forward, X, X_mask, use_reentrant=False)
+        torch.cuda.empty_cache()
 
         dec_out = self.peptide_precursor_emb(Y_input, charge, parent_mz)
         for dec in self.decoders:
-            dec_out = dec(dec_out, enc_out, pad_mask=Y_mask)
-            torch.cuda.empty_cache()
+            dec_out = checkpoint(dec, dec_out, enc_out, Y_mask, use_reentrant=False)
+        torch.cuda.empty_cache()
 
         return self.ll(dec_out)
 
@@ -186,7 +195,7 @@ class TransNovo(nn.Module):
             X_mask = to_bool.unsqueeze(-1).expand(-1, -1, X.size(1))
             Y_mask = (Y == PAD_TOKEN).unsqueeze(-1).expand(-1, -1, Y.size(1)).int()
 
-        return X_mask.transpose(-2, -1).detach(), Y_mask.transpose(-2, -1).detach()
+        return X_mask.transpose(-2, -1), Y_mask.transpose(-2, -1)
 
 
     def generate(self, X):

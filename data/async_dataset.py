@@ -28,6 +28,9 @@ class AsyncDataset(IterableDataset):
         self.device = device
 
         self.inspect_files(path)
+
+    def start_worker(self):
+        self.thread = threading.Thread(target=self.load_data)
         self.thread.start()
 
     def inspect_files(self, path: Path):
@@ -51,6 +54,8 @@ class AsyncDataset(IterableDataset):
 
         except Exception as e:
             logger.error(f"{traceback.format_exc()}\n{e}")
+        finally:
+            self.queue.put(None)
 
     def put(self, tensor: Tuple[T, T, T, T]):
         while not self.__stop_event.is_set():
@@ -75,9 +80,11 @@ class AsyncDataset(IterableDataset):
     def load_file(self, path: Path) -> TensorBatch:
         tensor_batch = TensorBatch(1, (0, 0))
         tensor_batch.load_file(path)
+        tensor_batch.set_requires_grad_true()
         return tensor_batch
 
     def __call__(self) -> Generator[Tuple[T, T, T, T], None, None]:
+        self.start_worker()
         while True:
             batch = self.queue.get()
             if batch is None:
