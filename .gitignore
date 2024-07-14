@@ -1,7 +1,12 @@
 .jukit/
-data/
+datafiles/
 
 __pycache__
 snippets.py
+train_jukit.py
 
 *.pth
+*.tensor
+
+*.png
+*.jpg
