@@ -18,8 +18,9 @@ logger = setup_logger(__name__)
 class DataManifest():
     # TODO: Add functionality to update upon discovering new data files
 
-    def __init__(self, dir: Path):
+    def __init__(self, dir: Path, set_power_two=False):
         self.data_path = dir
+        self.set_power_two = set_power_two
         self.manifest_file_name = "msp.manifest"
         self.data_files = FileManager()
         self.positions = {} # id: []
@@ -59,8 +60,19 @@ class DataManifest():
             max_x = max(max_x, file_max_x)
             max_y = max(max_y, file_max_y)
 
-        self.maxes = (max_x, max_y)
+        # NOTE: Change them to closes power of 2 for better memory optimization
+        def closest_power_of_2(n:int) -> int:
+            power = 1
+            while power <= n:
+                power *= 2
+            return power
 
+        if self.set_power_two:
+            self.maxes = (closest_power_of_2(max_x), closest_power_of_2(max_y))
+            logger.debug(f"Manifest> max_x: {self.maxes[0]}, max_y: {self.maxes[1]} (maxes set to closes power of two):")
+        else:
+            self.maxes = (max_x, max_y)
+            logger.debug(f"Manifest> max_x: {max_x}, max_y: {max_y}")
     
     def inspect_locations(self):
         for i, f in self.data_files():
@@ -232,9 +244,9 @@ class FileManager:
 
 
 class MSPSplitDataset(Dataset):
-    def __init__(self, data_path: Path, interrupt: InterruptHandler) -> None:
+    def __init__(self, data_path: Path, interrupt: InterruptHandler, set_power_two: bool=False) -> None:
         super().__init__()
-        self.manifest = DataManifest(data_path)
+        self.manifest = DataManifest(data_path, set_power_two)
         self.tensor_files = FileManager()
         self.base_file_name = "msp.tensor"
         self.lock = threading.Lock()
