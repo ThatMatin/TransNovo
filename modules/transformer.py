@@ -39,7 +39,6 @@ class AttentionHead(nn.Module):
         Q = self.query(q)
 
         W = (Q @ K.transpose(-2, -1))/ C**0.5
-        del Q, K
 
         if self.is_masked:
             W = W.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
@@ -47,7 +46,7 @@ class AttentionHead(nn.Module):
         if pad_mask is not None:
             W = W.masked_fill(pad_mask == 1, float('-inf'))
 
-        W = checkpoint(W.softmax, -1, use_reentrant=True)
+        W = W.softmax(-1)
         W = self.dropout(W)
         return W @ V
 
@@ -70,7 +69,7 @@ class MultiHeadAttention(nn.Module):
 
     def forward(self, k: T, v: T, q: T, pad_mask=None):
         out = torch.concat([head(k, v, q, pad_mask=pad_mask) for head in self.heads], dim=-1)
-        out = self.dropout(checkpoint(self.proj, out, use_reentrant=True))
+        out = self.dropout(self.proj(out))
         return out
 
 
@@ -170,6 +169,7 @@ class TransNovo(nn.Module):
         enc_out = self.spectrum_emb(X)
         for enc in self.encoders:
             enc_out = enc(enc_out, X_mask)
+            log_memory("post encoder layer")
         return enc_out
 
 
@@ -178,12 +178,11 @@ class TransNovo(nn.Module):
         X_mask, Y_mask = self.get_padding_masks(X, Y_input)
 
         enc_out = checkpoint(self.enc_forward, X, X_mask, use_reentrant=False)
-        torch.cuda.empty_cache()
 
         dec_out = self.peptide_precursor_emb(Y_input, charge, parent_mz)
         for dec in self.decoders:
-            dec_out = checkpoint(dec, dec_out, enc_out, Y_mask, use_reentrant=False)
-        torch.cuda.empty_cache()
+            dec_out = dec(dec_out, enc_out, Y_mask)
+            log_memory("post deocder layer")
 
         return self.ll(dec_out)
 

@@ -1,7 +1,7 @@
-from typing import Optional
 import torch
 import torch.nn as nn
 from math import log, pi
+from typing import Optional
 from tokenizer.aa import get_vocab_size
 
 
@@ -11,21 +11,22 @@ class MZPositionalEncoding(nn.Module):
         self.d_model = d_model
         self.l_min = 0.001
         self.l_max = 10000
-        self.div_term = self.l_max / self.l_min * torch.exp(
-            torch.arange(0, d_model, 2).float() * (-log(self.l_min / (2 * pi)) / d_model)
-        )
+        div_term = self.l_max / self.l_min * torch.exp(
+            torch.arange(0, d_model, 2, dtype=torch.float32) * (-log(self.l_min / (2 * pi)) / d_model)
+        ).to("cuda")
+        self.register_buffer("div_term", div_term)
 
     def forward(self, x: torch.Tensor):
         # x: batch * T_x * mz
         batch_size, seq_len = x.shape
-        input = torch.floor(x / self.l_min)
+        input = torch.floor(x / self.l_min).unsqueeze(-1).detach()
         
         # Compute positional encodings on-the-fly
-        pe = torch.zeros(batch_size, seq_len, self.d_model, device=x.device, dtype=x.dtype)
-        pe[:, :, 0::2] = torch.sin(input.unsqueeze(-1) * self.div_term.to(x.device))
-        pe[:, :, 1::2] = torch.cos(input.unsqueeze(-1) * self.div_term.to(x.device))
-        pe.requires_grad_(True)
-        return pe
+        pe = torch.zeros(batch_size, seq_len, self.d_model, device=x.device, dtype=torch.float16)
+        pe[:, :, 0::2] = torch.sin(input * self.div_term)
+        pe[:, :, 1::2] = torch.cos(input * self.div_term)
+
+        return pe.requires_grad_()
 
 
 class PositionalEncoding(nn.Module):
@@ -75,9 +76,10 @@ class PeptidePrecursorEmbedding(nn.Module):
 
     def forward(self, y:torch.Tensor, charge:torch.Tensor, mz:torch.Tensor):
         pep_emb = self.pep_emb(y)
-        ch_emb = self.charge_emb(charge.unsqueeze(-1))
+        charge_emb = self.charge_emb(charge.unsqueeze(-1))
         mz_emb = self.mz_emb(mz.unsqueeze(-1))
-        return self.ln(pep_emb + ch_emb + mz_emb)
+        total = pep_emb + charge_emb + mz_emb
+        return self.ln(total)
 
 
 class SpectrumEmbedding(nn.Module):
@@ -96,6 +98,5 @@ class SpectrumEmbedding(nn.Module):
         mz_out = self.pos_emb(x[:, :, -1])
         scaled_int = x[:, :, 1].unsqueeze(-1) / x.size(1) ** 2
         int_out = self.intensity_embedding(scaled_int)
-        out = mz_out + int_out
-        out = self.ln(out)
-        return out
+        total = mz_out + int_out
+        return self.ln(total)

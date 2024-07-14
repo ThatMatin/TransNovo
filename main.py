@@ -13,20 +13,20 @@ logger = setup_logger(__name__)
 
 def main():
     p = Parameters(
-            d_model=32,
-            n_layers=1,
-            d_ff=32,
-            batch_size=16,
+            d_model=128,
+            n_layers=2,
+            d_ff=512,
+            batch_size=32,
             lr=5e-4,
             n_epochs=70,
             )
 
     # Data preparation
-    train_ds = D.AsyncDataset(Path("datafiles/1G/train"), p.batch_size, p.device, 200)
-    test_ds = D.AsyncDataset(Path("datafiles/1G/test"), p.batch_size, p.device, 200)
+    train_ds = D.AsyncDataset(Path("datafiles"), p.batch_size, p.device, 1000)
+    test_ds = D.AsyncDataset(Path("datafiles"), p.batch_size, p.device, 1000)
 
-    train_dl = DataLoader(train_ds, batch_size=p.batch_size)
-    test_dl = DataLoader(test_ds, batch_size=p.batch_size)
+    train_dl = DataLoader(train_ds, batch_size=p.batch_size, pin_memory=True)
+    test_dl = DataLoader(test_ds, batch_size=p.batch_size, pin_memory=True)
 
     # Update data stats
     manifest = D.DataManifest(Path("datafiles"))

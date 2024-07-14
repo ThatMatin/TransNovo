@@ -28,6 +28,7 @@ class TensorBatch():
         self.P = self.P[:offset]
 
     def save_to_file(self, filename: os.PathLike):
+        self.X = self.discretize(self.X)
         checkpoint = {
                 "X": self.X,
                 "Y": self.Y,
@@ -60,9 +61,46 @@ class TensorBatch():
         self.P = self.P.to(device)
 
     def __getitem__(self, index) -> Tuple[T, T, T, T]:
+        # NOTE: Use detach for transferring between processes
         if isinstance(index, slice):
-            return self.X[index.start:index.stop], self.Y[index.start:index.stop], \
-                    self.Ch[index.start:index.stop], self.P[index.start:index.stop]
+            return self.X[index.start:index.stop].detach(), self.Y[index.start:index.stop].detach(), \
+                    self.Ch[index.start:index.stop].detach(), self.P[index.start:index.stop].detach()
 
         else:
-            return self.X[index], self.Y[index], self.Ch[index], self.P[index]
+            return self.X[index].detach(), self.Y[index].detach(), self.Ch[index].detach(), self.P[index].detach()
+
+    def discretize(self, X: torch.Tensor) -> torch.Tensor:
+        _, indices = torch.sort(X[:, :, 1], descending=True)
+        sorted_indices = indices.unsqueeze(-1).expand(-1, -1, 2)
+        X_sorted = X.gather(1, sorted_indices)
+
+        # Non zero elements per spectrum (batch element)
+        non_zeros_counts = X_sorted.count_nonzero(1)[:, 0]
+        # start indeces of the weakest 33%
+        w33_st_idxs = (2/3 * non_zeros_counts).int()
+
+        # pluck the weakest 33% and mean them, then create a tensor from means
+        means_list = []
+        for b in range(X.size(0)):
+            m = X_sorted[b, w33_st_idxs[b]:non_zeros_counts[b], 1].mean()
+            means_list.append(m)
+        w33_means = torch.stack(means_list)
+
+        w33_means_div = w33_means.unsqueeze(-1).unsqueeze(-1).expand_as(X).clone()
+        w33_means_div[:, :, 0] = 1
+
+        X_w33_normalized = X / w33_means_div
+
+        intensities = X_w33_normalized[:, :, 1]
+        discretized = torch.zeros_like(intensities)
+        discretized[intensities >= 10] = 3
+        discretized[(intensities >= 2) & (intensities < 10)] = 2
+        discretized[(intensities >= 0.05) & (intensities < 2)] = 1
+        discretized[intensities < 0.05] = 0
+
+        X_intens_disc = X_w33_normalized.clone()
+        X_intens_disc[:, :, 1] = discretized
+
+        return X_intens_disc
+
+

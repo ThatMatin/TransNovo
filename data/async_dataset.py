@@ -1,14 +1,15 @@
-import queue
 import traceback
 import torch
-import threading
+import multiprocessing
+from multiprocessing import Queue
 from pathlib import Path
 from typing import Tuple, Generator
+from queue import Empty, Full
 
 from torch.utils.data import IterableDataset
 from data.splitter import FileManager
 from data.tensor import TensorBatch
-from logger import log_memory, setup_logger
+from logger import setup_logger
 
 T = torch.Tensor
 logger = setup_logger(__name__)
@@ -16,22 +17,21 @@ logger = setup_logger(__name__)
 class AsyncDataset(IterableDataset):
     def __init__(self, path: Path, train_batch_size: int, device="cuda", queue_size: int=10):
         super().__init__()
-        self.threads = list()
         self.files = FileManager()
         self.path = path
         self.train_batch_size = train_batch_size
         # TODO: dynamic queue size?
-        self.queue = queue.Queue(queue_size)
-        self.__stop_event = threading.Event()
+        self.queue = Queue(queue_size)
+        self.__stop_event = multiprocessing.Event()
         self.__len = None
-        self.thread = threading.Thread(target=self.load_data)
+        self.process = multiprocessing.Process(target=self.load_data)
         self.device = device
 
         self.inspect_files(path)
 
     def start_worker(self):
-        self.thread = threading.Thread(target=self.load_data)
-        self.thread.start()
+        self.process = multiprocessing.Process(target=self.load_data)
+        self.process.start()
 
     def inspect_files(self, path: Path):
         for p in path.glob("*.msp.tensor"):
@@ -41,12 +41,10 @@ class AsyncDataset(IterableDataset):
 
     def load_data(self):
         try:
-            log_memory()
             for _, file in self.files():
                 if self.__stop_event.is_set():
                     break
                 tensors = self.load_file(file)
-                tensors.to(self.device)
                 for i in range(tensors.get_batch_size()):
                     if self.__stop_event.is_set():
                         break
@@ -62,17 +60,23 @@ class AsyncDataset(IterableDataset):
             try:
                 self.queue.put(tensor, timeout=1)
                 return
-            except queue.Full:
+            except Full:
                 pass
 
-        logger.debug("clearing queue and putting None")
-        self.queue.queue.clear()
-        self.queue.put(None, timeout=1)
-
+    def clear_queue(self):
+        queue = self.queue
+        while not queue.empty():
+            try:
+                queue.get_nowait()
+            except Empty:
+                break
 
     def stop(self):
         try:
             self.__stop_event.set()
+            self.process.kill()
+            self.process.join()
+
         except Exception as e:
             logger.error(f"{traceback.format_exc()}\n{e}")
 
@@ -89,6 +93,10 @@ class AsyncDataset(IterableDataset):
             batch = self.queue.get()
             if batch is None:
                 break
+            assert all(isinstance(x, T) for x in batch)
+            X, _, _, P = batch
+            X.requires_grad_()
+            P.requires_grad_()
             yield batch
 
     def __iter__(self):
