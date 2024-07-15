@@ -27,6 +27,7 @@ def train_step(model: nn.Module,
 
     result_matrix = torch.zeros((len(train_dl), 3))
     is_profiling_on = bool(get("profile.is_active"))
+    clip_value = float(get("train.clip_value"))
 
 
     model.train()
@@ -38,9 +39,7 @@ def train_step(model: nn.Module,
         Ch = Ch.to("cuda")
         P = P.to("cuda")
         with autocast():
-            log_memory("pre logit")
             logits = model(X, Y, Ch, P)
-            log_memory("post logit")
 
             optimizer.zero_grad(True)
 
@@ -58,7 +57,7 @@ def train_step(model: nn.Module,
         else:
             scaler.scale(loss).backward()
 
-        nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        nn.utils.clip_grad_value_(model.parameters(), clip_value=clip_value)
         scaler.step(optimizer)
         scaler.update()
 

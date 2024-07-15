@@ -19,12 +19,11 @@ MODEL_STATE_DICT = "model_state_dict"
 MODEL_HYPERPARAMETERS = "hyper_params"
 
 class AttentionHead(nn.Module):
-    def __init__(self, d_model, d_key, d_val, dropout, is_masked=False):
+    def __init__(self, d_model, d_key, d_val, is_masked=False):
         super().__init__()
         self.key = nn.Linear(d_model, d_key, bias=False)
         self.query = nn.Linear(d_model, d_key, bias=False)
         self.value = nn.Linear(d_model, d_val, bias=False)
-        self.dropout = nn.Dropout(dropout)
         # TODO: find a good place for it
         # keep the dimensions large enough to cover max seq lenghth (2000 here)
         self.register_buffer("tril", torch.tril(torch.ones(2000, 2000)))
@@ -33,22 +32,21 @@ class AttentionHead(nn.Module):
 
     def forward(self, k: T, v: T, q: T,
                 pad_mask: Optional[T] = None):
-        _, T, C = q.shape
+        B, T, C = q.shape
         K = self.key(k)
         V = self.value(v)
         Q = self.query(q)
 
-        W = (Q @ K.transpose(-2, -1))/ C**0.5
+        W = torch.baddbmm(torch.empty(B, Q.size(1), K.size(1), device=Q.device), Q, K.transpose(-2, -1), alpha=1.0/C**0.5, beta=0)
 
         if self.is_masked:
-            W = W.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+            W.masked_fill_(self.tril[:T, :T] == 0, float('-inf'))
 
         if pad_mask is not None:
-            W = W.masked_fill(pad_mask == 1, float('-inf'))
+            W.masked_fill_(pad_mask == 1, float('-inf'))
 
         W = W.softmax(-1)
-        W = self.dropout(W)
-        return W @ V
+        return torch.bmm(W, V)
 
     def _init_weights(self):
         nn.init.xavier_uniform_(self.key.weight)
@@ -62,9 +60,9 @@ class MultiHeadAttention(nn.Module):
     """
     def __init__(self, d_model, d_key, d_val, n_heads, dropout, is_masked=False):
         super().__init__()
-        self.heads = nn.ModuleList([AttentionHead(d_model, d_key, d_val, dropout, is_masked) for _ in range(n_heads)])
+        self.heads = nn.ModuleList([AttentionHead(d_model, d_key, d_val, is_masked) for _ in range(n_heads)])
         self.proj = nn.Linear(d_model, d_model)
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(dropout, True)
         nn.init.xavier_uniform_(self.proj.weight)
 
     def forward(self, k: T, v: T, q: T, pad_mask=None):
@@ -83,8 +81,7 @@ class AttentionBlock(nn.Module):
         k = self.ln(k)
         v = self.ln(v)
         q = self.ln(q)
-        out = q + self.MHA(k, v, q, pad_mask=pad_mask)
-        return out
+        return q + self.MHA(k, v, q, pad_mask=pad_mask)
 
 
 class FeedForward(nn.Module):
@@ -92,9 +89,9 @@ class FeedForward(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
                 nn.Linear(d_model, d_ff),
-                nn.ReLU(),
+                nn.ReLU(inplace=True),
                 nn.Linear(d_ff, d_model),
-                nn.Dropout(dropout),
+                nn.Dropout(dropout, True),
                 )
         self._init_weights()
 
@@ -106,8 +103,7 @@ class FeedForward(nn.Module):
                     nn.init.zeros_(layer.bias)
 
     def forward(self, X:T):
-        out = self.net(X)
-        return out
+        return self.net(X)
 
 
 class FeedForwardBlock(nn.Module):
@@ -169,7 +165,6 @@ class TransNovo(nn.Module):
         enc_out = self.spectrum_emb(X)
         for enc in self.encoders:
             enc_out = enc(enc_out, X_mask)
-            log_memory("post encoder layer")
         return enc_out
 
 
@@ -182,7 +177,6 @@ class TransNovo(nn.Module):
         dec_out = self.peptide_precursor_emb(Y_input, charge, parent_mz)
         for dec in self.decoders:
             dec_out = dec(dec_out, enc_out, Y_mask)
-            log_memory("post deocder layer")
 
         return self.ll(dec_out)
 

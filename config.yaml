@@ -10,10 +10,13 @@ model:
   d_model: 256
   n_layers: 2
   d_ff: 1024
-  batch_size: 32
+  batch_size: 16
   lr: 5e-4
   n_epochs: 70
 
+train:
+  clip_value: 10.0
+
 profile:
-  is_active: false
+  is_active: true
   profile_log_file: profile.log
