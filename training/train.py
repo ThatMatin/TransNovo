@@ -1,15 +1,16 @@
 import torch
 import torch.nn as nn
 import time
+import training
+from config import get
 from typing import Optional
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LambdaLR
-from torch.profiler import profiler
+from torch.profiler import ProfilerActivity, profiler, record_function
 from torch.utils import data
 from tqdm.auto import tqdm
 from torch.cuda.amp import autocast, GradScaler
-import training
-from logger import log_memory, setup_logger
+from logger import log_memory, log_profiler, setup_logger
 from interrupt import InterruptHandler
 from modules.transformer import TransNovo
 from training import mean_batch_acc
@@ -25,6 +26,8 @@ def train_step(model: nn.Module,
                interruptHandler: InterruptHandler):
 
     result_matrix = torch.zeros((len(train_dl), 3))
+    is_profiling_on = bool(get("profile.is_active"))
+
 
     model.train()
     for i, (X,Y,Ch,P) in tqdm(enumerate(train_dl),
@@ -45,10 +48,17 @@ def train_step(model: nn.Module,
             logits_flat = logits.transpose(-2, -1)
             loss = loss_fn(logits_flat, tgt_output)
 
-        with profiler.profile(record_shapes=True) as prof:
+        if is_profiling_on:
+            with profiler.profile(activities=[ProfilerActivity.CUDA, ProfilerActivity.CPU],
+                                  record_shapes=True, profile_memory=True) as prof:
+                with record_function("model_infernece"):
+                    scaler.scale(loss).backward()
+            prof.export_chrome_trace("trace.json")
+            log_profiler(prof.key_averages().table(sort_by="cuda_time_total"))
+        else:
             scaler.scale(loss).backward()
-        logger.debug(prof.key_averages().table(sort_by="cuda_time_total"))
-        # nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+        nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         scaler.step(optimizer)
         scaler.update()
 

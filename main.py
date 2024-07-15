@@ -1,10 +1,11 @@
-from torch.utils.data import DataLoader
 import data as D
 import training
 import traceback
+from config import get
 from pathlib import Path
 from logger import setup_logger
 from modules.parameters import Parameters
+from torch.utils.data import DataLoader
 from torch.nn import CrossEntropyLoss
 from interrupt import InterruptHandler
 from modules import TransNovo
@@ -12,18 +13,19 @@ from modules import TransNovo
 logger = setup_logger(__name__)
 
 def main():
+
     p = Parameters(
-            d_model=128,
-            n_layers=2,
-            d_ff=512,
-            batch_size=32,
-            lr=5e-4,
-            n_epochs=70,
+            d_model=get("model.d_model"),
+            n_layers=get("model.n_layers"),
+            d_ff=get("model.d_ff"),
+            batch_size=get("model.batch_size"),
+            lr=float(get("model.lr")),
+            n_epochs=get("model.n_epochs"),
             )
 
     # Data preparation
-    train_ds = D.AsyncDataset(Path("datafiles"), p.batch_size, p.device, 1000)
-    test_ds = D.AsyncDataset(Path("datafiles"), p.batch_size, p.device, 1000)
+    train_ds = D.AsyncDataset(Path("datafiles/train/"), p.batch_size, p.device, get("dataloader.queue_size"))
+    test_ds = D.AsyncDataset(Path("datafiles/test/"), p.batch_size, p.device, get("dataloader.queue_size"))
 
     train_dl = DataLoader(train_ds, batch_size=p.batch_size, pin_memory=True)
     test_dl = DataLoader(test_ds, batch_size=p.batch_size, pin_memory=True)

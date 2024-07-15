@@ -1,0 +1,19 @@
+datapaths:
+  test: datafiles/test
+  train: datafiles/train
+  manifest: datafiles
+
+dataloader:
+  queue_size: 1000
+
+model:
+  d_model: 256
+  n_layers: 2
+  d_ff: 1024
+  batch_size: 32
+  lr: 5e-4
+  n_epochs: 70
+
+profile:
+  is_active: false
+  profile_log_file: profile.log
