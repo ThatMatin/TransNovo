@@ -31,7 +31,7 @@ def main():
     test_dl = DataLoader(test_ds, batch_size=p.batch_size, pin_memory=True)
 
     # Update data stats
-    manifest = D.DataManifest(Path("datafiles"))
+    manifest = D.DataManifest(Path(get("datapaths.manifest")))
     manifest.load_manifest()
     p.data_point_count = manifest.total_spectra()
     p.max_spectrum_length, p.max_peptide_length = manifest.maxes
