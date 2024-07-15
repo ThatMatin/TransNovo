@@ -9,7 +9,7 @@ def create_msp_tensor():
     data_path = Path("datafiles")
 
     interrupt = InterruptHandler()
-    data = D.MSPSplitDataset(data_path, interrupt)
+    data = D.MSPSplitDataset(data_path, interrupt, True)
     data.auto(file_size_mb)
 
 
