@@ -48,9 +48,7 @@ class AsyncDataset(IterableDataset):
                 for i in range(tensors.get_batch_size()):
                     if self.__stop_event.is_set():
                         break
-                    # TODO: There are all-zeros entries in the data. Check where they occur
-                    if torch.any(tensors[i][0]).item() and torch.any(tensors[i][1]).item():
-                        self.put(tensors[i])
+                    self.put(tensors[i])
 
         except Exception as e:
             logger.error(f"{traceback.format_exc()}\n{e}")
