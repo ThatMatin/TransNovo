@@ -53,3 +53,11 @@ def log_profiler(msg):
         profiler_logger = logger
 
     profiler_logger.info(msg)
+
+def set_all_loggers_to_info():
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    for logger_name in logging.root.manager.loggerDict:
+        logger = logging.getLogger(logger_name)
+        logger.setLevel(logging.INFO)

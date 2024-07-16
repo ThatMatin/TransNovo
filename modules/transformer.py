@@ -64,6 +64,7 @@ class MultiHeadAttention(nn.Module):
         self.proj = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout, True)
         nn.init.xavier_uniform_(self.proj.weight)
+        nn.init.zeros_(self.proj.bias)
 
     def forward(self, k: T, v: T, q: T, pad_mask=None):
         out = torch.concat([head(k, v, q, pad_mask=pad_mask) for head in self.heads], dim=-1)

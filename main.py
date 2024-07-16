@@ -3,7 +3,7 @@ import training
 import traceback
 from config import get
 from pathlib import Path
-from logger import setup_logger
+from logger import set_all_loggers_to_info, setup_logger
 from modules.parameters import Parameters
 from torch.utils.data import DataLoader
 from torch.nn import CrossEntropyLoss
@@ -13,6 +13,8 @@ from modules import TransNovo
 logger = setup_logger(__name__)
 
 def main():
+
+    set_all_loggers_to_info()
 
     p = Parameters(
             d_model=get("model.d_model"),
