@@ -1,8 +1,8 @@
-import os, io, re, tarfile, pickle, random
+import os, io, re, tarfile, pickle
 import threading
 import torch
-from data.tensor import TensorBatch
 import tokenizer as T
+from data.tensor import TensorBatch
 from interrupt import InterruptHandler
 from logger import setup_logger
 from math import ceil
@@ -12,6 +12,7 @@ from torch.types import Number
 from torch.utils.data import Dataset
 from contextlib import contextmanager
 from tqdm.auto import tqdm
+from tokenizer.spectrum import END_TOKEN, START_TOKEN, pad_spectrum
 
 logger = setup_logger(__name__)
 
@@ -67,6 +68,9 @@ class DataManifest():
                 power *= 2
             return power
 
+        # INFO: Reserve space for EOS, SOS paddings
+        max_x += 2
+        max_y += 2
         if self.set_power_two:
             self.maxes = (closest_power_of_2(max_x), closest_power_of_2(max_y))
             logger.debug(f"Manifest> max_x: {self.maxes[0]}, max_y: {self.maxes[1]} (maxes set to closes power of two):")
@@ -313,6 +317,7 @@ class MSPSplitDataset(Dataset):
         max_x, max_y = self.manifest.maxes
         tensor = TensorBatch(batch_size, self.manifest.maxes)
 
+        spectrum = []
         x_tensor = torch.zeros(max_x, 2, dtype=torch.float32)
         y_tensor = torch.empty(1)
         charge = -1
@@ -340,18 +345,27 @@ class MSPSplitDataset(Dataset):
 
                 # update from previous iteration
                 if batch_counter != 0:
+                    padded_spectrum = pad_spectrum(spectrum, max_x)
+                    x_tensor = torch.tensor(padded_spectrum)
+
+                    assert charge >= 0
+                    assert parent_mz > 0
+                    assert x_tensor[:, 0].count_nonzero().item() == peak_counter + 2
+                    assert tuple(x_tensor[peak_counter + 1].tolist()) == END_TOKEN
+                    assert tuple(x_tensor[0].tolist()) == START_TOKEN
+                    assert y_tensor.count_nonzero().item() == len(pep_seq) + 2
+                    assert y_tensor[0] == T.aa.START_TOKEN
+                    assert y_tensor[len(pep_seq) + 1] == T.aa.END_TOKEN
+
                     tensor.update(batch_counter - 1, x_tensor, y_tensor, charge, parent_mz)
 
                 # break the loop
                 if batch_counter == batch_size:
-                    assert charge >= 0
-                    assert parent_mz > 0
-                    assert x_tensor[:, 0].count_nonzero().item() == peak_counter
-                    assert y_tensor.count_nonzero().item() == len(pep_seq) + 2
                     return tensor, pos 
 
                 batch_counter += 1
                 peak_counter = 0
+                spectrum = []
                 x_tensor = torch.zeros(max_x, 2, dtype=torch.float32)
                 y_tensor = torch.empty(1)
 
@@ -369,7 +383,7 @@ class MSPSplitDataset(Dataset):
 
             elif re.match(r'^\d', line):
                 mz, intensity = map(float, line.split()[:2])
-                x_tensor[peak_counter] = torch.tensor([mz, intensity])
+                spectrum.append((mz, intensity))
                 peak_counter += 1
 
 

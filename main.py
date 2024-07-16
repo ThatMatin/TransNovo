@@ -24,14 +24,14 @@ def main():
             )
 
     # Data preparation
-    train_ds = D.AsyncDataset(Path(get("datapaths.train")), p.batch_size, p.device, get("dataloader.queue_size"))
-    test_ds = D.AsyncDataset(Path(get("datapaths.test")), p.batch_size, p.device, get("dataloader.queue_size"))
+    train_ds = D.AsyncDataset(Path(get("data.train-path")), p.batch_size, p.device, get("dataloader.queue_size"))
+    test_ds = D.AsyncDataset(Path(get("data.test-path")), p.batch_size, p.device, get("dataloader.queue_size"))
 
     train_dl = DataLoader(train_ds, batch_size=p.batch_size, pin_memory=True)
     test_dl = DataLoader(test_ds, batch_size=p.batch_size, pin_memory=True)
 
     # Update data stats
-    manifest = D.DataManifest(Path(get("datapaths.manifest")))
+    manifest = D.DataManifest(Path(get("data.manifest-path")))
     manifest.load_manifest()
     p.data_point_count = manifest.total_spectra()
     p.max_spectrum_length, p.max_peptide_length = manifest.maxes
