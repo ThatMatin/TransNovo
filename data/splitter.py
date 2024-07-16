@@ -337,7 +337,7 @@ class MSPSplitDataset(Dataset):
 
             # EOF
             if line == "":
-                tensor.trim(batch_counter)
+                tensor.trim(batch_counter - 1)
                 return tensor, 0
 
             line = line.strip()
