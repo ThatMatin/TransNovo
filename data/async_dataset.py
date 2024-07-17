@@ -23,6 +23,7 @@ class AsyncDataset(IterableDataset):
         # TODO: dynamic queue size?
         self.queue = Queue(queue_size)
         self.__stop_event = multiprocessing.Event()
+        self.__done_event = multiprocessing.Event()
         self.__len = None
         self.process = multiprocessing.Process(target=self.load_data)
         self.device = device
@@ -54,6 +55,7 @@ class AsyncDataset(IterableDataset):
             logger.error(f"{traceback.format_exc()}\n{e}")
         finally:
             self.queue.put(None)
+            self.__done_event.wait()
 
     def put(self, tensor: Tuple[T, T, T, T]):
         while not self.__stop_event.is_set():
@@ -98,6 +100,7 @@ class AsyncDataset(IterableDataset):
             X.requires_grad_()
             P.requires_grad_()
             yield batch
+        self.__done_event.set()
 
     def __iter__(self):
         return self.__call__()
