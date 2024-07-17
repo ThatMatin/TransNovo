@@ -122,18 +122,15 @@ def init_adam(model: TransNovo):
     warmup_steps = p.warmup_steps
 
     print(f"Optimizer init:\n\ttotal steps: {total_steps}\n\twarmup steps: {warmup_steps}")
-
-    def lr_lambda(current_step: int):
-        if current_step < warmup_steps:
-            return float(current_step) / float(max(1, warmup_steps))
-        else:
-            progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-            return 0.5 * (1.0 + torch.cos(torch.tensor(progress * 3.141592653589793))).item()
+    def polynomial_decay(current_step: int):
+        return (1 - current_step / float(total_steps)) ** 2
 
     a = Adam(model.parameters(), lr, betas, eps, 1e-5)
-    scheduler = LambdaLR(a, lr_lambda)
+    scheduler = LambdaLR(a, polynomial_decay)
+
     if len(model.hyper_params.optimizer_state_dict) != 0:
         a.load_state_dict(model.hyper_params.optimizer_state_dict)
+
     return a, scheduler
 
 
