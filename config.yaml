@@ -17,6 +17,7 @@ model:
   n_epochs: 70
 
 train:
+  compile: false
   clip_value: 50.0
 
 profile:

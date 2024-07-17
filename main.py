@@ -9,12 +9,14 @@ from torch.utils.data import DataLoader
 from torch.nn import CrossEntropyLoss
 from interrupt import InterruptHandler
 from modules import TransNovo
+from torch import set_float32_matmul_precision, compile
 
 logger = setup_logger(__name__)
 
 def main():
 
     set_all_loggers_to_info()
+    set_float32_matmul_precision("high")
 
     p = Parameters(
             d_model=get("model.d_model"),
@@ -42,6 +44,10 @@ def main():
     model = TransNovo(p)
     model.load_if_file_exists()
     model.to(model.hyper_params.device)
+    if bool(get("train.compile")):
+        model = compile(model, mode="max-autotune")
+
+    assert isinstance(model, TransNovo)
     logger.debug(f"Model size: {model.get_model_size_mb()}")
 
     # loss, optimizer, scheduler, interrupt
