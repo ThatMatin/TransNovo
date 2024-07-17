@@ -47,7 +47,6 @@ def main():
     if bool(get("train.compile")):
         model = compile(model, mode="max-autotune")
 
-    assert isinstance(model, TransNovo)
     logger.debug(f"Model size: {model.get_model_size_mb()}")
 
     # loss, optimizer, scheduler, interrupt

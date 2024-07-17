@@ -22,8 +22,8 @@ class AsyncDataset(IterableDataset):
         self.train_batch_size = train_batch_size
         # TODO: dynamic queue size?
         self.queue = Queue(queue_size)
-        self.__stop_event = multiprocessing.Event()
-        self.__done_event = multiprocessing.Event()
+        self.stop_event = multiprocessing.Event()
+        self.done_event = multiprocessing.Event()
         self.__len = None
         self.process = multiprocessing.Process(target=self.load_data)
         self.device = device
@@ -31,6 +31,7 @@ class AsyncDataset(IterableDataset):
         self.inspect_files(path)
 
     def start_worker(self):
+        self.done_event.clear()
         self.process = multiprocessing.Process(target=self.load_data)
         self.process.start()
 
@@ -43,11 +44,11 @@ class AsyncDataset(IterableDataset):
     def load_data(self):
         try:
             for _, file in self.files():
-                if self.__stop_event.is_set():
+                if self.stop_event.is_set():
                     break
                 tensors = self.load_file(file)
                 for i in range(tensors.get_batch_size()):
-                    if self.__stop_event.is_set():
+                    if self.stop_event.is_set():
                         break
                     self.put(tensors[i])
 
@@ -55,10 +56,10 @@ class AsyncDataset(IterableDataset):
             logger.error(f"{traceback.format_exc()}\n{e}")
         finally:
             self.queue.put(None)
-            self.__done_event.wait()
+            self.done_event.wait()
 
     def put(self, tensor: Tuple[T, T, T, T]):
-        while not self.__stop_event.is_set():
+        while not self.stop_event.is_set():
             try:
                 self.queue.put(tensor, timeout=1)
                 return
@@ -75,7 +76,7 @@ class AsyncDataset(IterableDataset):
 
     def stop(self):
         try:
-            self.__stop_event.set()
+            self.stop_event.set()
             self.process.kill()
             self.process.join()
 
@@ -100,7 +101,7 @@ class AsyncDataset(IterableDataset):
             X.requires_grad_()
             P.requires_grad_()
             yield batch
-        self.__done_event.set()
+        self.done_event.set()
 
     def __iter__(self):
         return self.__call__()

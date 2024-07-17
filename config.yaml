@@ -13,7 +13,7 @@ model:
   n_layers: 2
   d_ff: 1024
   batch_size: 8
-  lr: 5e-4
+  lr: 1e-4
   n_epochs: 70
 
 train:
