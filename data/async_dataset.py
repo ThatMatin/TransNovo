@@ -92,16 +92,21 @@ class AsyncDataset(IterableDataset):
 
     def __call__(self) -> Generator[Tuple[T, T, T, T], None, None]:
         self.start_worker()
-        while True:
-            batch = self.queue.get()
-            if batch is None:
-                break
-            assert all(isinstance(x, T) for x in batch)
-            X, _, _, P = batch
-            X.requires_grad_()
-            P.requires_grad_()
-            yield batch
-        self.done_event.set()
+        try:
+            while True:
+                batch = self.queue.get()
+                if batch is None:
+                    break
+                assert all(isinstance(x, T) for x in batch)
+                X, _, _, P = batch
+                X.requires_grad_()
+                P.requires_grad_()
+                yield batch
+        except Exception as e:
+            logger.error(f"{traceback.format_exc()}\n{e}")
+        finally:
+            self.done_event.set()
+
 
     def __iter__(self):
         return self.__call__()

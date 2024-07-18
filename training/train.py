@@ -63,13 +63,13 @@ def train_step(model: nn.Module,
             nn.utils.clip_grad_value_(model.parameters(), clip_value=clip_value)
             scaler.step(optimizer)
             scaler.update()
-            optimizer.zero_grad(set_to_none=True)  # Reset the gradients after updating the weights
+            optimizer.zero_grad(set_to_none=True)
 
             if scheduler is not None:
                 scheduler.step()
 
 
-        result_matrix[i, 0] = loss.detach()
+        result_matrix[i, 0] = loss.detach() * accumulation_steps
         result_matrix[i, 2] = model.grad_norms_mean()
         result_matrix[i, 1] = mean_batch_acc(logits.detach(), tgt_output.detach())
 

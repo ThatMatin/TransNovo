@@ -9,17 +9,17 @@ dataloader:
   queue_size: 128
 
 model:
-  d_model: 256
-  n_layers: 2
-  d_ff: 1024
-  batch_size: 8
+  d_model: 128
+  n_layers: 4
+  d_ff: 512
+  batch_size: 4
   lr: 1e-5
   n_epochs: 50
 
 train:
   compile: false
   clip_value: 50.0
-  accumulation_steps: 4
+  accumulation_steps: 8
 
 profile:
   is_active: false
