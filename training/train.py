@@ -28,6 +28,7 @@ def train_step(model: nn.Module,
     result_matrix = torch.zeros((len(train_dl), 3))
     is_profiling_on = bool(get("profile.is_active"))
     clip_value = float(get("train.clip_value"))
+    accumulation_steps = int(get("train.accumulation_steps"))
 
 
     model.train()
@@ -46,6 +47,7 @@ def train_step(model: nn.Module,
             tgt_output = Y[:, 1:]
             logits_flat = logits.transpose(-2, -1)
             loss = loss_fn(logits_flat, tgt_output)
+            loss = loss / accumulation_steps
 
         if is_profiling_on:
             with profiler.profile(activities=[ProfilerActivity.CUDA, ProfilerActivity.CPU],
@@ -57,12 +59,14 @@ def train_step(model: nn.Module,
         else:
             scaler.scale(loss).backward()
 
-        nn.utils.clip_grad_value_(model.parameters(), clip_value=clip_value)
-        scaler.step(optimizer)
-        scaler.update()
+        if (i + 1) % accumulation_steps == 0:
+            nn.utils.clip_grad_value_(model.parameters(), clip_value=clip_value)
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad(set_to_none=True)  # Reset the gradients after updating the weights
 
-        if scheduler is not None:
-            scheduler.step()
+            if scheduler is not None:
+                scheduler.step()
 
 
         result_matrix[i, 0] = loss.detach()

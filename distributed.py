@@ -59,6 +59,7 @@ def main(rank, world_size):
     model = TransNovo(p)
     model.load_if_file_exists()
     model.to(model.hyper_params.device)
+    logger.debug("compile")
     if bool(get("train.compile")):
         model = torch.compile(model, mode="max-autotune")
 

@@ -19,6 +19,7 @@ model:
 train:
   compile: false
   clip_value: 50.0
+  accumulation_steps: 4
 
 profile:
   is_active: false
