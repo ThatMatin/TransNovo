@@ -54,7 +54,7 @@ def log_profiler(msg):
 
     profiler_logger.info(msg)
 
-def set_all_loggers_to_info():
+def set_all_loggers_level_to_error():
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.ERROR)
 
