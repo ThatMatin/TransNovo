@@ -123,7 +123,7 @@ def init_adam(model: TransNovo):
 
     print(f"Optimizer init:\n\ttotal steps: {total_steps}\n\twarmup steps: {warmup_steps}")
     def polynomial_decay(current_step: int):
-        return (1 - current_step / float(total_steps)) ** 2
+        return (1 - current_step / float(total_steps)) ** 3
 
     a = Adam(model.parameters(), lr, betas, eps, 1e-5)
     scheduler = LambdaLR(a, polynomial_decay)
