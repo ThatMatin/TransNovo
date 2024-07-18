@@ -44,9 +44,9 @@ def log_profiler(msg):
     global profiler_logger
     if profiler_logger is None:
         logger = logging.getLogger('profiler_logger')
-        logger.setLevel(logging.DEBUG)  # Set the logging level for logger1
+        logger.setLevel(logging.INFO)  # Set the logging level for logger1
         file_handler = logging.FileHandler('profile.log')
-        file_handler.setLevel(logging.DEBUG)
+        file_handler.setLevel(logging.INFO)
         formatter = logging.Formatter(format, datefmt)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
@@ -56,8 +56,8 @@ def log_profiler(msg):
 
 def set_all_loggers_to_info():
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    root_logger.setLevel(logging.ERROR)
 
     for logger_name in logging.root.manager.loggerDict:
         logger = logging.getLogger(logger_name)
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.ERROR)
