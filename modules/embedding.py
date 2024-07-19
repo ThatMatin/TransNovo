@@ -96,7 +96,6 @@ class SpectrumEmbedding(nn.Module):
 
     def forward(self, x):
         mz_out = self.pos_emb(x[:, :, -1])
-        scaled_int = x[:, :, 1].unsqueeze(-1) / x.size(1) ** 2
-        int_out = self.intensity_embedding(scaled_int)
+        int_out = self.intensity_embedding(x[:, :, 1].unsqueeze(-1))
         total = mz_out + int_out
         return self.ln(total)
