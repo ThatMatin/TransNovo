@@ -123,3 +123,21 @@ class AsyncDataset(IterableDataset):
 
         self.__len = total
         return total
+
+
+def cuda_collate_fn(batch):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    batch = torch.utils.data.dataloader.default_collate(batch)
+    def to_device(obj):
+        if isinstance(obj, torch.Tensor):
+            return obj.to(device)
+        elif isinstance(obj, dict):
+            return {key: to_device(val) for key, val in obj.items()}
+        elif isinstance(obj, list):
+            return [to_device(item) for item in obj]
+        elif isinstance(obj, tuple):
+            return tuple(to_device(item) for item in obj)
+        else:
+            return obj
+
+    return to_device(batch)

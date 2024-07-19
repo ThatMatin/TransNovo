@@ -1,4 +1,5 @@
 import data as D
+from data.async_dataset import cuda_collate_fn
 import training
 import traceback
 from config import get
@@ -31,8 +32,8 @@ def main():
     train_ds = D.AsyncDataset(Path(get("data.train-path")), p.batch_size, p.device, get("dataloader.queue_size"))
     test_ds = D.AsyncDataset(Path(get("data.test-path")), p.batch_size, p.device, get("dataloader.queue_size"))
 
-    train_dl = DataLoader(train_ds, batch_size=p.batch_size, pin_memory=True)
-    test_dl = DataLoader(test_ds, batch_size=p.batch_size, pin_memory=True)
+    train_dl = DataLoader(train_ds, batch_size=p.batch_size, collate_fn=cuda_collate_fn)
+    test_dl = DataLoader(test_ds, batch_size=p.batch_size, collate_fn=cuda_collate_fn)
 
     # Update data stats
     manifest = D.DataManifest(Path(get("data.manifest-path")))

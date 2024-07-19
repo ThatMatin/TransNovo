@@ -35,10 +35,6 @@ def train_step(model: nn.Module,
     for i, (X,Y,Ch,P) in tqdm(enumerate(train_dl),
                          total=len(train_dl),
                          desc="over training set"):
-        X = X.to("cuda")
-        Y = Y.to("cuda")
-        Ch = Ch.to("cuda")
-        P = P.to("cuda")
         with autocast():
             logits = model(X, Y, Ch, P)
 
@@ -92,10 +88,6 @@ def test_step(model: nn.Module,
         for i, (X,Y, Ch, P) in tqdm(enumerate(test_dl),
                              total=len(test_dl),
                              desc="over test set"):
-            X =X.to("cuda")
-            Y = Y.to("cuda")
-            Ch =Ch.to("cuda")
-            P = P.to("cuda")
             with autocast():
                 logits = model(X, Y, Ch, P)
 
